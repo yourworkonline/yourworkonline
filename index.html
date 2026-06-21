@@ -1325,23 +1325,29 @@
   /* ===== state + storage ===== */
   var S = { user:null, location:{state:"",city:""}, posts:[], worker:null, unlocked:[], notifs:[], chats:{}, auth:{mode:"login",mobile:"",code:"",pending:null}, pay:{amount:0,app:null,after:null}, wkSkills:[] };
 
+  function userKey(k){ return S.user ? "ywd2_"+S.user.mobile+"_"+k : "ywd2_guest_"+k; }
+
   function save(){ try{
     localStorage.setItem("ywd2_user",JSON.stringify(S.user));
     localStorage.setItem("ywd2_loc",JSON.stringify(S.location));
+    // Shared (all users see same posts and chats)
     localStorage.setItem("ywd2_posts",JSON.stringify(S.posts));
-    localStorage.setItem("ywd2_worker",JSON.stringify(S.worker));
-    localStorage.setItem("ywd2_unlocked",JSON.stringify(S.unlocked));
-    localStorage.setItem("ywd2_notifs",JSON.stringify(S.notifs||[]));
     localStorage.setItem("ywd2_chats",JSON.stringify(S.chats||{}));
+    // Per-user
+    localStorage.setItem(userKey("worker"),JSON.stringify(S.worker));
+    localStorage.setItem(userKey("unlocked"),JSON.stringify(S.unlocked));
+    localStorage.setItem(userKey("notifs"),JSON.stringify(S.notifs||[]));
   }catch(e){} }
   function load(){ try{
     var u=localStorage.getItem("ywd2_user"); if(u)S.user=JSON.parse(u);
     var l=localStorage.getItem("ywd2_loc"); if(l)S.location=JSON.parse(l);
+    // Shared
     var p=localStorage.getItem("ywd2_posts"); if(p)S.posts=JSON.parse(p);
-    var w=localStorage.getItem("ywd2_worker"); if(w)S.worker=JSON.parse(w);
-    var un=localStorage.getItem("ywd2_unlocked"); if(un)S.unlocked=JSON.parse(un);
-    var nf=localStorage.getItem("ywd2_notifs"); if(nf)S.notifs=JSON.parse(nf);
     var ch=localStorage.getItem("ywd2_chats"); if(ch)S.chats=JSON.parse(ch);
+    // Per-user (needs S.user to be loaded first)
+    var w=localStorage.getItem(userKey("worker")); S.worker=w?JSON.parse(w):null;
+    var un=localStorage.getItem(userKey("unlocked")); S.unlocked=un?JSON.parse(un):[];
+    var nf=localStorage.getItem(userKey("notifs")); S.notifs=nf?JSON.parse(nf):[];
     if(S.user && !S.user.joined){ S.user.joined=Date.now(); }
   }catch(e){} }
 
@@ -1527,13 +1533,22 @@
       var prev = (S.user && S.user.mobile===S.auth.mobile) ? S.user : {};
       S.user={ mobile:S.auth.mobile, name:name||"Member", type:prev.type||"Individual", org:prev.org||"", address:prev.address||"", joined:prev.joined||Date.now() };
     }
+    // Reload this user's per-user data (worker, unlocked, notifs)
+    var w=localStorage.getItem(userKey("worker")); S.worker=w?JSON.parse(w):null;
+    var un=localStorage.getItem(userKey("unlocked")); S.unlocked=un?JSON.parse(un):[];
+    var nf=localStorage.getItem(userKey("notifs")); S.notifs=nf?JSON.parse(nf):[];
     save(); renderAuth();
     el("authModal").classList.remove("show");
     toast("Welcome, "+S.user.name.split(" ")[0]+"!","🙏");
+    renderWorkBoard();
     showTermsIfNeeded();
     var act=S.auth.pending; S.auth.pending=null; if(typeof act==="function") act();
   };
-  window.logout = function(){ S.user=null; save(); renderAuth(); closeProfileMenu(); go("home"); toast("Logged out","👋"); };
+  window.logout = function(){
+    S.user=null; S.worker=null; S.unlocked=[]; S.notifs=[];
+    localStorage.setItem("ywd2_user","null");
+    renderAuth(); closeProfileMenu(); go("home"); toast("Logged out","👋");
+  };
 
   function requireLogin(after){
     if(S.user){ return true; }
