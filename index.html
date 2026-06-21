@@ -1,0 +1,2463 @@
+  <!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="YourWorkDo" />
+<meta name="theme-color" content="#1A1B2E" />
+<meta name="application-name" content="YourWorkDo" />
+<link rel="manifest" href="data:application/json,%7B%22name%22%3A%22YourWorkDo%22%2C%22short_name%22%3A%22YourWorkDo%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23F4F1E9%22%2C%22theme_color%22%3A%22%231A1B2E%22%2C%22orientation%22%3A%22portrait%22%7D" />
+<title>YourWorkDo — Get work done. Hire, work, or supply to government.</title>
+<meta name="description" content="Post any real-world work and a verified local gets it done. Hire help, find work, or supply goods and custom fabrication to government offices under GeM direct-purchase limits." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;500;600;700;800&family=Hanken+Grotesque:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+/* ===== YourWorkDo quotation generator (shared with Node example build) ===== */
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) { module.exports = factory(); }
+  else { root.YWDQuote = factory(); }
+})(typeof self !== "undefined" ? self : this, function () {
+
+  function round2(x){ return Math.round((Number(x)||0)*100)/100; }
+
+  function inr(n){
+    n = Number(n)||0;
+    var s = n.toFixed(2), parts = s.split("."), x = parts[0];
+    var last3 = x.length>3 ? x.slice(-3) : x;
+    var other = x.length>3 ? x.slice(0,-3) : "";
+    if(other) last3 = "," + last3;
+    var grouped = other.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + last3;
+    return grouped + "." + parts[1];
+  }
+
+  function words(num){
+    num = Math.round(Number(num)||0);
+    if(num===0) return "Zero Rupees Only";
+    var a=["","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","Ten","Eleven","Twelve","Thirteen","Fourteen","Fifteen","Sixteen","Seventeen","Eighteen","Nineteen"];
+    var b=["","","Twenty","Thirty","Forty","Fifty","Sixty","Seventy","Eighty","Ninety"];
+    function two(n){ return n<20 ? a[n] : (b[Math.floor(n/10)] + (n%10? " "+a[n%10] : "")); }
+    function three(n){ return (n>=100 ? a[Math.floor(n/100)]+" Hundred"+(n%100?" ":"") : "") + (n%100? two(n%100):""); }
+    var cr=Math.floor(num/10000000); num%=10000000;
+    var la=Math.floor(num/100000);  num%=100000;
+    var th=Math.floor(num/1000);    num%=1000;
+    var hu=num, str="";
+    if(cr) str+=three(cr)+" Crore ";
+    if(la) str+=two(la)+" Lakh ";
+    if(th) str+=two(th)+" Thousand ";
+    if(hu) str+=three(hu);
+    return str.trim().replace(/\s+/g," ")+" Rupees Only";
+  }
+
+  function hsnFor(cat){
+    var c=(cat||"").toLowerCase();
+    if(c.indexOf("cartridge")>-1||c.indexOf("consumable")>-1) return "844399";
+    if(c.indexOf("computer")>-1||c.indexOf("peripheral")>-1) return "847330";
+    if(c.indexOf("furniture")>-1) return "940360";
+    if(c.indexOf("paint")>-1||c.indexOf("whitewash")>-1) return "995473";
+    if(c.indexOf("printing")>-1) return "998912";
+    if(c.indexOf("scientific")>-1||c.indexOf("lab")>-1) return "902780";
+    if(c.indexOf("fabrication")>-1||c.indexOf("machine")>-1||c.indexOf("cad")>-1) return "998871";
+    if(c.indexOf("electrical")>-1||c.indexOf("maintenance")>-1) return "995461";
+    if(c.indexOf("amc")>-1||c.indexOf("annual")>-1) return "998719";
+    return "—";
+  }
+
+  function fmtDate(d){
+    var m=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    return d.getDate()+" "+m[d.getMonth()]+" "+d.getFullYear();
+  }
+
+  // Build a complete quotation object from a small input.
+  // input.items = [{desc, qty, value, hsn?, unit?, cadRef?}]  (value = line total in the chosen GST mode)
+  // input.gstMode = "inclusive" | "exclusive"   input.taxMode = "intra" | "inter"   input.gstRate = 18
+  function buildQuote(input){
+    var gstMode = input.gstMode==="exclusive" ? "exclusive" : "inclusive";
+    var taxMode = input.taxMode==="inter" ? "inter" : "intra";
+    var gstRate = (typeof input.gstRate==="number") ? input.gstRate : 18;
+
+    var raw = (input.items && input.items.length) ? input.items
+            : [{ desc:input.desc, qty:input.qty, value:input.value, hsn:input.hsn, cadRef:input.cadRef }];
+    var items = raw.map(function(it){
+      var qty = parseInt(it.qty,10)||1;
+      var val = round2(it.value)||0;
+      var taxable = gstMode==="exclusive" ? val : round2(val/(1+gstRate/100));
+      var rate = round2(taxable/qty);
+      var desc = (it.desc||"") + (it.cadRef ? "  [CAD ref: "+it.cadRef+", attached]" : "");
+      return { desc:desc, hsn:(it.hsn||hsnFor(input.category||it.category||"")), qty:qty, unit:(it.unit||input.unit||"No."), rate:rate, amount:taxable };
+    });
+
+    var taxable = round2(items.reduce(function(s,i){ return s+i.amount; },0));
+    var gstTotal = round2(taxable*gstRate/100);
+    var cgst=0, sgst=0, igst=0;
+    if(taxMode==="inter"){ igst = gstTotal; }
+    else { cgst = round2(gstTotal/2); sgst = round2(gstTotal-cgst); }
+    var grand = round2(taxable + gstTotal);
+
+    var now = input.now ? new Date(input.now) : new Date();
+    var valid = new Date(now.getTime()); valid.setDate(valid.getDate()+15);
+    var yymm = String(now.getFullYear()).slice(-2) + ("0"+(now.getMonth()+1)).slice(-2);
+
+    var gstLine = (gstMode==="exclusive"
+        ? "Prices are exclusive of GST; GST @ "+gstRate+"% is charged as shown above."
+        : "Prices are inclusive of GST @ "+gstRate+"%.")
+      + (taxMode==="inter" ? " Charged as IGST (inter-state supply)." : " Charged as CGST + SGST (intra-state supply).")
+      + " HSN/SAC is indicative.";
+
+    return {
+      quoteNo: input.quoteNo || ("YWD/Q/"+yymm+"/"+(Math.floor(Math.random()*9000)+1000)),
+      date: input.date || fmtDate(now),
+      validUntil: input.validUntil || fmtDate(valid),
+      reference: input.category || "Supply of goods/services",
+      seller: input.seller || {
+        name:"YourWorkDo Services",
+        line1:"Unit 12, Andheri MIDC, Andheri (E)",
+        line2:"Mumbai, Maharashtra — 400 093",
+        gstin:"27ABCDE1234F1Z5",
+        phone:"+91-98xxxxxx00",
+        email:"supply@yourworkdo.in",
+        web:"www.yourworkdo.in"
+      },
+      buyer: input.buyer || {},
+      items: items,
+      totals: { taxable:taxable, cgst:cgst, sgst:sgst, igst:igst, grand:grand, gstRate:gstRate, taxMode:taxMode, gstMode:gstMode },
+      notes: input.notes || [
+        "This quotation is valid for 15 days from the date stated above.",
+        gstLine,
+        "Delivery within 7–10 working days from a confirmed order, at the delivery location stated.",
+        "Payment via UPI / Razorpay, or as per the buyer's standard terms; for Government buyers, after delivery and satisfactory inspection.",
+        "Goods/services supplied as per the stated specification, with OEM warranty where applicable.",
+        "Provided to assist a GFR Rule 154 direct purchase (up to Rs 25,000) / GeM-compliant procurement. Final procurement remains the buyer's responsibility."
+      ],
+      bank: input.bank || { name:"YourWorkDo Services", bank:"HDFC Bank, Powai", acc:"5010 1234 5678", ifsc:"HDFC0000123", upi:"yourworkdo@hdfcbank" }
+    };
+  }
+
+  function drawQuotation(doc, q){
+    var W=210, M=14, R=W-M;
+    var navy=[26,27,46], pine=[22,110,91], gray=[110,104,87], line=[200,196,182], soft=[244,241,233], green=[226,238,233];
+    function C(c){ doc.setTextColor(c[0],c[1],c[2]); }
+    function F(c){ doc.setFillColor(c[0],c[1],c[2]); }
+    function D(c){ doc.setDrawColor(c[0],c[1],c[2]); }
+
+    F(navy); doc.rect(0,0,W,3,"F");
+
+    doc.setFont("helvetica","bold"); doc.setFontSize(20); C(navy);
+    doc.text("YourWorkDo", M, 16);
+    doc.setFont("helvetica","normal"); doc.setFontSize(8); C(pine);
+    doc.text("Work  •  Supply  •  Services", M, 21);
+    doc.setFont("helvetica","bold"); doc.setFontSize(17); C(navy);
+    doc.text("QUOTATION", R, 16, {align:"right"});
+    doc.setFont("helvetica","normal"); doc.setFontSize(8); C(gray);
+    doc.text("Proforma / RFQ response", R, 21, {align:"right"});
+
+    D(line); doc.setLineWidth(0.4); doc.line(M,25,R,25);
+
+    // FROM (left)
+    var y=31, sx=M;
+    doc.setFontSize(8.5); doc.setFont("helvetica","bold"); C(navy); doc.text("FROM", sx, y);
+    C([40,40,50]);
+    var sL=[q.seller.name, q.seller.line1, q.seller.line2, "GSTIN: "+q.seller.gstin, "Ph: "+q.seller.phone, q.seller.email+"   "+q.seller.web];
+    var sy=y+5;
+    sL.forEach(function(t,i){ if(!t)return; doc.setFont("helvetica", i===0?"bold":"normal"); doc.setFontSize(i===0?9:8); doc.text(String(t), sx, sy); sy+=4.5; });
+
+    // meta box (right)
+    var mx=130, boxY=y-3, boxH=30;
+    D(line); F(soft); doc.setLineWidth(0.3); doc.roundedRect(mx, boxY, R-mx, boxH, 1.5,1.5,"FD");
+    doc.setFontSize(8.2);
+    [["Quotation No.",q.quoteNo],["Date",q.date],["Valid Until",q.validUntil]].forEach(function(r,i){
+      var ry=boxY+6+i*6.2;
+      doc.setFont("helvetica","normal"); C(gray); doc.text(r[0], mx+4, ry);
+      doc.setFont("helvetica","bold"); C(navy); doc.text(String(r[1]), R-4, ry, {align:"right"});
+    });
+    doc.setFont("helvetica","normal"); C(gray); doc.text("Category", mx+4, boxY+6+3*6.2);
+    doc.setFont("helvetica","bold"); C(navy);
+    doc.text(doc.splitTextToSize(String(q.reference), R-mx-26), R-4, boxY+6+3*6.2, {align:"right"});
+
+    y = Math.max(sy, boxY+boxH) + 5;
+
+    // TO (buyer)
+    D(line); doc.line(M,y,R,y); y+=6;
+    doc.setFont("helvetica","bold"); doc.setFontSize(8.5); C(navy); doc.text("TO  (Buyer)", M, y);
+    var by=y+5; C([40,40,50]);
+    doc.setFont("helvetica","bold"); doc.setFontSize(9.5); doc.text(q.buyer.org||"—", M, by); by+=5;
+    doc.setFont("helvetica","normal"); doc.setFontSize(8.5);
+    if(q.buyer.type){ doc.text("Type: "+q.buyer.type, M, by); by+=4.5; }
+    if(q.buyer.person){ doc.text("Attn: "+q.buyer.person, M, by); by+=4.5; }
+    if(q.buyer.address){ var aL=doc.splitTextToSize("Address: "+q.buyer.address, 120); doc.text(aL, M, by); by+=4.5*aL.length; }
+    var ct=[]; if(q.buyer.email)ct.push(q.buyer.email); if(q.buyer.phone)ct.push(q.buyer.phone);
+    if(ct.length){ doc.text(ct.join("    "), M, by); by+=4.5; }
+    y=by+3;
+
+    // subject
+    doc.setFont("helvetica","bold"); doc.setFontSize(8.6); C(navy);
+    doc.text("Subject:", M, y);
+    var sw=doc.getTextWidth("Subject: ");
+    doc.setFont("helvetica","normal"); C([40,40,50]);
+    var sub=doc.splitTextToSize("Quotation for "+q.reference+", as per your requirement.", R-M-sw);
+    doc.text(sub, M+sw, y); y+=4.6*sub.length+2;
+
+    // table header
+    var cols=[{t:"#",w:8,a:"left"},{t:"Description & Specification",w:86,a:"left"},{t:"HSN/SAC",w:18,a:"center"},{t:"Qty",w:11,a:"center"},{t:"Unit",w:13,a:"center"},{t:"Rate (INR)",w:22,a:"right"}];
+    var used=0; cols.forEach(function(c){used+=c.w;}); cols.push({t:"Amount (INR)",w:(R-M)-used,a:"right"});
+    F(navy); doc.rect(M, y, R-M, 7, "F");
+    doc.setFont("helvetica","bold"); doc.setFontSize(7.6); C([255,255,255]);
+    var cx=M; cols.forEach(function(c){ var tx=c.a==="right"?cx+c.w-1.5:(c.a==="center"?cx+c.w/2:cx+1.5); doc.text(c.t, tx, y+4.7, {align:c.a}); cx+=c.w; });
+    y+=7;
+
+    // table rows
+    doc.setFont("helvetica","normal"); doc.setFontSize(7.8); C([35,35,45]); D(line); doc.setLineWidth(0.2);
+    q.items.forEach(function(it,idx){
+      var dl=doc.splitTextToSize(String(it.desc), cols[1].w-3);
+      var h=Math.max(7, dl.length*3.7+3);
+      doc.rect(M, y, R-M, h);
+      var vx=M; cols.forEach(function(c,ci){ if(ci>0) doc.line(vx,y,vx,y+h); vx+=c.w; });
+      var px=M;
+      doc.text(String(idx+1), px+cols[0].w/2, y+5, {align:"center"}); px+=cols[0].w;
+      doc.text(dl, px+1.5, y+4); px+=cols[1].w;
+      doc.text(String(it.hsn||"—"), px+cols[2].w/2, y+5, {align:"center"}); px+=cols[2].w;
+      doc.text(String(it.qty), px+cols[3].w/2, y+5, {align:"center"}); px+=cols[3].w;
+      doc.text(String(it.unit||"No."), px+cols[4].w/2, y+5, {align:"center"}); px+=cols[4].w;
+      doc.text(inr(it.rate), px+cols[5].w-1.5, y+5, {align:"right"}); px+=cols[5].w;
+      doc.text(inr(it.amount), px+cols[6].w-1.5, y+5, {align:"right"});
+      y+=h;
+    });
+
+    // totals (right stack)
+    var tW=66, tx2=R-tW;
+    doc.setFontSize(8);
+    var totRows=[["Taxable Value", q.totals.taxable]];
+    if(q.totals.taxMode==="inter"){ totRows.push(["IGST @ "+q.totals.gstRate+"%", q.totals.igst]); }
+    else { totRows.push(["CGST @ "+(q.totals.gstRate/2)+"%", q.totals.cgst]); totRows.push(["SGST @ "+(q.totals.gstRate/2)+"%", q.totals.sgst]); }
+    totRows.forEach(function(r){
+      doc.rect(tx2, y, tW, 6.6);
+      doc.setFont("helvetica","normal"); C(gray); doc.text(r[0], tx2+2, y+4.6);
+      C([35,35,45]); doc.text("Rs. "+inr(r[1]), R-2, y+4.6, {align:"right"});
+      y+=6.6;
+    });
+    F(green); doc.rect(tx2, y, tW, 8, "F"); doc.rect(tx2, y, tW, 8);
+    doc.setFont("helvetica","bold"); C(navy); doc.setFontSize(9.5);
+    doc.text("Grand Total", tx2+2, y+5.4);
+    doc.text("Rs. "+inr(q.totals.grand), R-2, y+5.4, {align:"right"});
+    y+=8+3;
+
+    // amount in words (full width)
+    doc.setFont("helvetica","bold"); doc.setFontSize(8); C(navy); doc.text("Amount in words:", M, y);
+    doc.setFont("helvetica","normal"); C([35,35,45]);
+    doc.text(doc.splitTextToSize(words(q.totals.grand), R-M-32), M+32, y);
+    y+=5;
+    doc.setFontSize(7); C(gray);
+    var modeNote=(q.totals.gstMode==="exclusive"?"Prices exclusive of GST; GST @ "+q.totals.gstRate+"% added above.":"All prices inclusive of GST @ "+q.totals.gstRate+"%.")+(q.totals.taxMode==="inter"?" IGST (inter-state).":" CGST + SGST (intra-state).");
+    doc.text(doc.splitTextToSize(modeNote, R-M), M, y); y+=4;
+
+    // terms (left) + bank (right)
+    D(line); doc.line(M,y,R,y); y+=5;
+    var startY=y;
+    doc.setFont("helvetica","bold"); doc.setFontSize(8.5); C(navy); doc.text("Terms & Conditions", M, y);
+    var ty=y+5; doc.setFont("helvetica","normal"); doc.setFontSize(7.4); C([45,45,55]);
+    var termsW=112;
+    q.notes.forEach(function(n,i){
+      var ln=doc.splitTextToSize((i+1)+".  "+n, termsW);
+      doc.text(ln, M, ty); ty+=ln.length*3.5+1.2;
+    });
+    // bank box
+    var bx=M+118, bw=R-(M+118), bh=34;
+    D(line); F(soft); doc.roundedRect(bx, startY, bw, bh, 1.5,1.5,"FD");
+    doc.setFont("helvetica","bold"); doc.setFontSize(8); C(navy); doc.text("Payment details", bx+3, startY+6);
+    doc.setFont("helvetica","normal"); doc.setFontSize(7.4); C([40,40,50]);
+    var bl=["A/c name: "+q.bank.name,"Bank: "+q.bank.bank,"A/c no.: "+q.bank.acc,"IFSC: "+q.bank.ifsc,"UPI: "+q.bank.upi];
+    var byk=startY+11; bl.forEach(function(t){ doc.text(t, bx+3, byk); byk+=4.4; });
+
+    y=Math.max(ty, startY+bh)+6;
+
+    // signatory
+    doc.setFont("helvetica","normal"); doc.setFontSize(8.5); C([35,35,45]);
+    doc.text("For YourWorkDo Services", R, y, {align:"right"});
+    D(line); doc.line(R-50, y+12, R, y+12);
+    doc.setFontSize(8); C(gray); doc.text("Authorised Signatory", R, y+16, {align:"right"});
+
+    // footer
+    var fy=288;
+    D(line); doc.setLineWidth(0.3); doc.line(M,fy,R,fy);
+    doc.setFontSize(6.6); C(gray);
+    var foot = doc.splitTextToSize("Demo quotation for an early-access concept. Prices indicative, subject to confirmation. Not a tax invoice or purchase order.", 132);
+    doc.text(foot, M, fy+4);
+    doc.text(q.quoteNo, R, fy+4, {align:"right"});
+  }
+
+  return { inr:inr, words:words, buildQuote:buildQuote, drawQuotation:drawQuotation, hsnFor:hsnFor };
+});
+
+</script>
+<style>
+  :root{
+    --ink:#1A1B2E;--ink-2:#262844;--paper:#F4F1E9;--paper-2:#EEEADF;--card:#FFFFFF;
+    --mist:#E4DECF;--line:#D8D1BF;--marigold:#F2A20C;--marigold-deep:#C97D04;
+    --pine:#166E5B;--pine-deep:#0F5546;--pine-soft:#E2EEE9;--blue:#235FB8;--sky:#E9F0FA;
+    --muted:#6C6757;--muted-2:#8B8675;--danger:#D24A3D;--r:18px;--r-sm:12px;
+    --maxw:1180px;--ease:cubic-bezier(.22,.61,.36,1);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html{scroll-behavior:smooth;}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:"Hanken Grotesque",system-ui,sans-serif;font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;}
+  h1,h2,h3,h4{font-family:"Bricolage Grotesque",sans-serif;line-height:1.08;letter-spacing:-0.02em;margin:0;font-weight:700;}
+  p{margin:0;} a{color:inherit;text-decoration:none;}
+  .mono{font-family:"Space Mono",monospace;}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px;}
+
+  /* buttons */
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-family:"Hanken Grotesque";font-weight:700;font-size:15px;padding:12px 20px;border-radius:999px;border:1.5px solid transparent;cursor:pointer;transition:transform .15s var(--ease),box-shadow .15s var(--ease),background .15s;}
+  .btn-go{background:var(--marigold);color:var(--ink);box-shadow:0 4px 0 var(--marigold-deep);}
+  .btn-go:active{transform:translateY(2px);box-shadow:0 2px 0 var(--marigold-deep);}
+  .btn-green{background:var(--pine);color:#fff;box-shadow:0 4px 0 var(--pine-deep);}
+  .btn-green:active{transform:translateY(2px);box-shadow:0 2px 0 var(--pine-deep);}
+  .btn-ghost{background:#fff;color:var(--ink);border-color:var(--line);}
+  .btn-ghost:hover{border-color:var(--ink);}
+  .btn-ink{background:var(--ink);color:#fff;}
+  .btn-sm{padding:9px 15px;font-size:14px;}
+  .btn-block{width:100%;}
+
+  /* header */
+  header.site{position:sticky;top:0;z-index:50;background:rgba(244,241,233,.9);backdrop-filter:blur(10px);border-bottom:1px solid var(--mist);}
+  .hd{display:flex;align-items:center;gap:18px;height:66px;}
+  .brand{font-family:"Bricolage Grotesque";font-weight:800;font-size:22px;letter-spacing:-0.03em;cursor:pointer;flex:0 0 auto;}
+  .brand b{color:var(--pine);}
+  .mainnav{display:flex;gap:6px;margin-left:6px;flex:1;}
+  .mainnav a{font-weight:600;font-size:14.5px;padding:8px 12px;border-radius:9px;color:var(--ink);opacity:.8;cursor:pointer;}
+  .mainnav a:hover{opacity:1;background:var(--paper-2);}
+  .mainnav a.on{opacity:1;background:var(--ink);color:#fff;}
+  .loc{display:flex;gap:8px;align-items:center;flex:0 0 auto;}
+  .loc select{font-family:inherit;font-size:13.5px;font-weight:600;padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;background:#fff;color:var(--ink);max-width:130px;cursor:pointer;}
+  .loc select:focus{outline:none;border-color:var(--pine);}
+  .auth{display:flex;gap:8px;align-items:center;flex:0 0 auto;}
+  .profile-wrap{position:relative;}
+  .profile-btn{display:flex;align-items:center;gap:8px;background:#fff;border:1.5px solid var(--line);border-radius:999px;padding:6px 12px 6px 6px;cursor:pointer;font-weight:700;font-size:14px;}
+  .profile-btn .av{width:30px;height:30px;border-radius:50%;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:"Bricolage Grotesque";font-weight:800;font-size:14px;}
+  .profile-menu{position:absolute;right:0;top:48px;width:240px;background:#fff;border:1px solid var(--mist);border-radius:14px;box-shadow:0 20px 44px -18px rgba(26,27,46,.4);padding:8px;display:none;}
+  .profile-menu.open{display:block;}
+  .pm-head{padding:12px;border-bottom:1px solid var(--mist);margin-bottom:6px;}
+  .pm-head .nm{font-weight:800;font-size:15.5px;}
+  .pm-head .meta{font-size:13px;color:var(--muted);}
+  .pm-item{display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:9px;font-weight:600;font-size:14.5px;cursor:pointer;width:100%;background:none;border:none;text-align:left;color:var(--ink);}
+  .pm-item:hover{background:var(--paper-2);}
+  .pm-item.danger{color:var(--danger);}
+  .burger{display:none;background:none;border:1.5px solid var(--line);border-radius:9px;width:40px;height:40px;cursor:pointer;font-size:18px;}
+
+  /* sections */
+  .section{display:none;padding:54px 0;animation:fade .3s var(--ease);}
+  .section.active{display:block;}
+  @keyframes fade{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+  .eyebrow{font-family:"Space Mono";font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--pine);font-weight:700;display:inline-block;margin-bottom:14px;}
+  .sec-h{font-size:clamp(1.8rem,4vw,2.7rem);font-weight:800;max-width:22ch;}
+  .sec-sub{margin-top:14px;color:var(--muted);font-size:18px;max-width:60ch;}
+
+  /* hero */
+  .hero{padding:60px 0 30px;}
+  .hero h1{font-size:clamp(2.3rem,5vw,4rem);font-weight:800;max-width:16ch;}
+  .hero h1 .hl{color:var(--pine);}
+  .hero .lead{margin-top:20px;font-size:19px;color:#3a3b4d;max-width:46ch;}
+  .audience{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:40px;}
+  .aud{background:#fff;border:2px solid var(--mist);border-radius:var(--r);padding:24px;cursor:pointer;transition:transform .18s var(--ease),box-shadow .18s,border-color .18s;}
+  .aud:hover{transform:translateY(-4px);box-shadow:0 18px 38px -22px rgba(26,27,46,.4);border-color:var(--line);}
+  .aud .emo{font-size:40px;display:block;margin-bottom:12px;}
+  .aud h3{font-size:21px;font-weight:800;margin-bottom:8px;}
+  .aud p{font-size:15px;color:var(--muted);}
+  .aud .go{margin-top:14px;font-weight:700;color:var(--pine);font-size:14.5px;}
+  .aud.gov{background:var(--ink);border-color:var(--ink);color:#fff;}
+  .aud.gov h3{color:#fff;} .aud.gov p{color:#B4B2C8;} .aud.gov .go{color:var(--marigold);}
+  .aud.gov .tag{display:inline-block;font-family:"Space Mono";font-size:10px;font-weight:700;letter-spacing:.08em;background:var(--marigold);color:var(--ink);padding:3px 8px;border-radius:6px;margin-bottom:10px;text-transform:uppercase;}
+
+  /* services grid */
+  .svc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
+  .svc{background:#fff;border:2px solid var(--mist);border-radius:var(--r-sm);padding:18px 14px;text-align:center;cursor:pointer;transition:transform .14s var(--ease),border-color .14s,box-shadow .14s;}
+  .svc:hover{transform:translateY(-3px);border-color:var(--pine);box-shadow:0 12px 26px -18px rgba(26,27,46,.4);}
+  .svc .emo{font-size:34px;display:block;margin-bottom:9px;}
+  .svc .nm{font-weight:700;font-size:15px;}
+  .svc .hint{font-size:12px;color:var(--muted);margin-top:3px;}
+  .svc.other{background:var(--pine-soft);border-color:var(--pine);}
+
+  /* forms */
+  .formwrap{background:#fff;border:2px solid var(--mist);border-radius:var(--r);padding:30px;max-width:760px;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+  .fg{margin-bottom:18px;}
+  .fg label{display:block;font-weight:700;font-size:14.5px;margin-bottom:7px;}
+  .fg label .req{color:var(--danger);}
+  .fg .help{font-weight:400;color:var(--muted);font-size:12.5px;margin-left:4px;}
+  .inp,select.inp,textarea.inp{width:100%;font-family:inherit;font-size:15.5px;padding:12px 14px;border:1.5px solid var(--line);border-radius:11px;background:#fff;color:var(--ink);}
+  .inp:focus{outline:none;border-color:var(--pine);box-shadow:0 0 0 3px var(--pine-soft);}
+  textarea.inp{min-height:90px;resize:vertical;}
+  .rupee-in{position:relative;}
+  .rupee-in::before{content:"₹";position:absolute;left:13px;top:50%;transform:translateY(-50%);font-weight:800;color:var(--pine);font-family:"Bricolage Grotesque";}
+  .rupee-in .inp{padding-left:28px;}
+  .file-in{border:2px dashed var(--line);border-radius:12px;padding:18px;text-align:center;background:var(--paper-2);cursor:pointer;}
+  .file-in:hover{border-color:var(--pine);}
+  .file-in .emo{font-size:30px;display:block;margin-bottom:6px;}
+  .file-in .ft{font-weight:700;font-size:14.5px;}
+  .file-in .fh{font-size:12.5px;color:var(--muted);margin-top:3px;}
+  .file-in input{display:none;}
+  .file-name{margin-top:8px;font-family:"Space Mono";font-size:12.5px;color:var(--pine);font-weight:700;}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;}
+  .mchip{background:#fff;border:1.5px solid var(--line);border-radius:999px;padding:8px 14px;font-weight:600;font-size:13.5px;cursor:pointer;}
+  .mchip.on{background:var(--pine);color:#fff;border-color:var(--pine);}
+  .note-box{background:var(--sky);border:1.5px solid #cfdcf0;border-radius:12px;padding:13px 15px;font-size:13.5px;color:#234;display:flex;gap:10px;align-items:flex-start;margin-bottom:18px;}
+  .note-box .i{font-size:18px;}
+
+  /* govt callouts */
+  .limit-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:24px 0 8px;}
+  .limit{background:#fff;border:2px solid var(--mist);border-radius:var(--r-sm);padding:18px;}
+  .limit .amt{font-family:"Bricolage Grotesque";font-weight:800;font-size:24px;color:var(--pine);}
+  .limit .lt{font-weight:700;font-size:14px;margin:6px 0 4px;}
+  .limit .ld{font-size:13px;color:var(--muted);}
+
+  /* rules */
+  .rules-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .rule{background:#fff;border:2px solid var(--mist);border-radius:var(--r-sm);padding:20px;}
+  .rule .tag{font-family:"Space Mono";font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--pine);text-transform:uppercase;}
+  .rule h3{font-size:17.5px;font-weight:700;margin:9px 0 7px;}
+  .rule p{font-size:14px;color:var(--muted);line-height:1.55;}
+  .rule .law{margin-top:9px;font-family:"Space Mono";font-size:11.5px;color:var(--ink);background:var(--paper-2);border-radius:8px;padding:7px 9px;}
+  .disclaimer{margin-top:22px;font-size:13px;color:var(--muted);font-style:italic;background:var(--paper-2);border-radius:10px;padding:14px 16px;}
+
+  /* profile section */
+  .prof-card{background:#fff;border:2px solid var(--mist);border-radius:var(--r);padding:26px;display:flex;gap:18px;align-items:center;flex-wrap:wrap;}
+  .prof-card .bigav{width:64px;height:64px;border-radius:50%;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:"Bricolage Grotesque";font-weight:800;font-size:26px;flex:0 0 auto;}
+  .prof-card .nm{font-size:22px;font-weight:800;}
+  .prof-card .meta{color:var(--muted);font-size:15px;}
+  .verified{display:inline-flex;align-items:center;gap:4px;color:var(--pine);font-weight:700;font-size:13px;}
+  .post-list{margin-top:8px;}
+  .post-item{background:#fff;border:1.5px solid var(--mist);border-radius:12px;padding:15px;margin-bottom:12px;display:flex;gap:12px;align-items:flex-start;}
+  .post-item .emo{font-size:26px;}
+  .post-item .pt{font-weight:700;font-size:15.5px;}
+  .post-item .pm{font-size:13px;color:var(--muted);}
+  .post-item .pstat{margin-left:auto;font-family:"Space Mono";font-size:11px;font-weight:700;background:var(--pine-soft);color:var(--pine-deep);padding:5px 9px;border-radius:7px;text-transform:uppercase;white-space:nowrap;}
+  .sub-h{font-family:"Bricolage Grotesque";font-weight:700;font-size:19px;margin:26px 0 14px;}
+  .empty{text-align:center;color:var(--muted);padding:34px;background:#fff;border:2px dashed var(--mist);border-radius:var(--r);}
+
+  /* modal */
+  .overlay{position:fixed;inset:0;z-index:80;background:rgba(26,27,46,.55);display:none;align-items:center;justify-content:center;padding:18px;}
+  .overlay.show{display:flex;}
+  .modal{background:var(--paper);width:100%;max-width:480px;border-radius:20px;padding:26px;max-height:92vh;overflow-y:auto;animation:pop .25s var(--ease);}
+  .modal.wide{max-width:680px;}
+  @keyframes pop{from{transform:translateY(20px) scale(.98);opacity:.6;}to{transform:none;opacity:1;}}
+  .modal-x{float:right;background:#fff;border:1.5px solid var(--line);border-radius:50%;width:36px;height:36px;font-size:16px;cursor:pointer;color:var(--muted);}
+  .modal h2{font-size:22px;font-weight:800;display:flex;align-items:center;gap:9px;margin-bottom:5px;}
+  .modal .msub{color:var(--muted);font-size:14.5px;margin-bottom:18px;}
+  .tabs{display:flex;gap:8px;margin-bottom:18px;background:var(--paper-2);padding:5px;border-radius:12px;}
+  .tab{flex:1;text-align:center;padding:10px;border-radius:9px;font-weight:700;font-size:14px;cursor:pointer;border:none;background:none;color:var(--muted);}
+  .tab.on{background:#fff;color:var(--ink);box-shadow:0 2px 8px -4px rgba(0,0,0,.2);}
+  .otp-row{display:flex;gap:9px;justify-content:center;margin:6px 0 16px;}
+  .otp-box{width:46px;height:54px;text-align:center;font-family:"Bricolage Grotesque";font-size:24px;font-weight:800;border:1.5px solid var(--line);border-radius:12px;background:#fff;color:var(--ink);}
+  .otp-box:focus{outline:none;border-color:var(--pine);}
+  .demo-otp{background:#FFF4D6;border:1.5px dashed var(--marigold-deep);border-radius:11px;padding:11px 14px;font-size:14px;text-align:center;margin-bottom:14px;color:#7a5a06;}
+  .demo-otp b{font-family:"Bricolage Grotesque";font-size:19px;letter-spacing:3px;color:var(--ink);}
+
+  /* razorpay-style payment */
+  .rzp-head{background:linear-gradient(135deg,#0b3a82,#235FB8);color:#fff;margin:-26px -26px 0;padding:22px 26px;border-radius:20px 20px 0 0;}
+  .rzp-merchant{display:flex;align-items:center;gap:12px;}
+  .rzp-logo{width:42px;height:42px;border-radius:12px;background:#fff;color:var(--ink);font-family:"Bricolage Grotesque";font-weight:800;display:flex;align-items:center;justify-content:center;font-size:18px;}
+  .rzp-merchant .mn{font-weight:800;font-size:16px;}
+  .rzp-merchant .ma{font-size:12.5px;opacity:.85;}
+  .rzp-amt{font-family:"Bricolage Grotesque";font-weight:800;font-size:30px;margin-top:14px;}
+  .rzp-body{padding:20px 0 4px;}
+  .rzp-sec{font-weight:700;font-size:13.5px;color:var(--muted);margin:6px 0 12px;text-transform:uppercase;letter-spacing:.04em;font-size:12px;}
+  .upi-apps{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;}
+  .upi-app{background:#fff;border:1.5px solid var(--line);border-radius:12px;padding:12px 4px;text-align:center;cursor:pointer;transition:border-color .15s,transform .12s;}
+  .upi-app:hover{border-color:var(--pine);transform:translateY(-2px);}
+  .upi-app.on{border-color:var(--pine);box-shadow:0 0 0 3px var(--pine-soft);}
+  .upi-app .emo{font-size:26px;display:block;}
+  .upi-app .un{font-size:11px;font-weight:700;margin-top:4px;}
+  .rzp-or{text-align:center;color:var(--muted);font-size:12.5px;margin:10px 0;position:relative;}
+  .rzp-demo{background:#FFF4D6;border:1.5px dashed var(--marigold-deep);border-radius:11px;padding:10px 13px;font-size:12.5px;color:#7a5a06;margin-bottom:14px;text-align:center;}
+  .rzp-success{text-align:center;padding:14px 0;}
+  .rzp-success .tick{width:74px;height:74px;border-radius:50%;background:var(--pine);color:#fff;display:flex;align-items:center;justify-content:center;font-size:40px;margin:0 auto 14px;animation:pop2 .4s var(--ease);}
+  @keyframes pop2{0%{transform:scale(.3);opacity:0;}70%{transform:scale(1.12);}100%{transform:scale(1);}}
+  .txn{font-family:"Space Mono";font-size:12.5px;color:var(--muted);margin-top:8px;}
+  .spin{width:22px;height:22px;border:3px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:sp 0.8s linear infinite;display:inline-block;vertical-align:middle;}
+  @keyframes sp{to{transform:rotate(360deg);}}
+
+  /* terms */
+  .terms-body{font-size:14px;color:#33343f;line-height:1.65;}
+  .terms-body h3{font-size:16px;font-weight:700;margin:18px 0 6px;}
+  .terms-body ul{margin:6px 0 6px 18px;padding:0;}
+  .terms-body li{margin-bottom:5px;}
+
+  /* toast */
+  .toast-wrap{position:fixed;left:0;right:0;bottom:24px;z-index:90;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;padding:0 16px;}
+  .toast{background:var(--ink);color:#fff;border-radius:12px;padding:12px 18px;font-weight:600;font-size:14.5px;box-shadow:0 10px 30px -8px rgba(0,0,0,.5);display:flex;align-items:center;gap:9px;animation:tin .3s var(--ease);max-width:460px;}
+  @keyframes tin{from{transform:translateY(12px);opacity:0;}to{transform:none;opacity:1;}}
+
+  /* footer */
+  footer{background:var(--paper-2);border-top:1px solid var(--mist);padding:46px 0 32px;margin-top:30px;}
+  .foot{display:flex;justify-content:space-between;gap:36px;flex-wrap:wrap;}
+  .foot .brand{font-size:20px;margin-bottom:8px;cursor:default;}
+  .foot p{font-size:14px;color:var(--muted);max-width:30ch;}
+  .foot-links{display:flex;gap:50px;flex-wrap:wrap;}
+  .foot-col h4{font-family:"Space Mono";font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted-2);font-weight:700;margin-bottom:12px;}
+  .foot-col a{display:block;font-size:14px;opacity:.8;margin-bottom:8px;cursor:pointer;}
+  .foot-col a:hover{opacity:1;color:var(--pine);}
+  .foot-base{margin-top:36px;padding-top:20px;border-top:1px solid var(--mist);font-family:"Space Mono";font-size:12.5px;color:var(--muted);display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;}
+
+  @media (max-width:980px){
+    .audience{grid-template-columns:1fr;}
+    .svc-grid{grid-template-columns:repeat(3,1fr);}
+    .grid2{grid-template-columns:1fr;}
+    .rules-grid{grid-template-columns:1fr;}
+    .limit-grid{grid-template-columns:1fr;}
+    .mainnav,.loc{display:none;}
+    .burger{display:block;}
+  }
+  @media (max-width:560px){
+    .svc-grid{grid-template-columns:repeat(2,1fr);}
+    .upi-apps{grid-template-columns:repeat(2,1fr);}
+    .wrap{padding:0 16px;}
+    .formwrap{padding:20px;}
+    .modal{padding:20px;} .rzp-head{margin:-20px -20px 0;padding:18px 20px;}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;}}
+
+  /* ===== MOBILE APP STYLES ===== */
+  @media (display-mode: standalone){
+    body{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);}
+  }
+  @media (max-width:600px){
+    html{-webkit-overflow-scrolling:touch;overscroll-behavior:none;}
+    body{-webkit-tap-highlight-color:transparent;padding-bottom:70px;}
+    /* Bottom navigation bar */
+    .mobile-bottom-nav{display:flex !important;}
+    header.site{border-bottom:none;box-shadow:0 1px 4px rgba(0,0,0,0.08);}
+    .mainnav{display:none !important;}
+    .loc{display:none !important;}
+    main{padding:0 1rem;}
+    .hero{padding:30px 0 20px;}
+    .hero h1{font-size:1.6rem;}
+    .audience{grid-template-columns:1fr;}
+    .svc-grid{grid-template-columns:repeat(2,1fr);}
+    .section{padding:30px 0;}
+  }
+  .mobile-bottom-nav{
+    display:none;
+    position:fixed;bottom:0;left:0;right:0;z-index:60;
+    background:#fff;border-top:1px solid var(--mist);
+    padding:6px 0 env(safe-area-inset-bottom,6px);
+    box-shadow:0 -2px 12px rgba(0,0,0,0.08);
+  }
+  .mobile-bottom-nav a{
+    flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;
+    padding:8px 4px;font-size:10px;font-weight:700;color:var(--muted);
+    text-decoration:none;cursor:pointer;border-radius:8px;transition:color 0.15s;
+  }
+  .mobile-bottom-nav a.active{color:var(--pine);}
+  .mobile-bottom-nav a .nav-icon{font-size:20px;line-height:1;}
+  .mobile-bottom-nav a .nav-label{font-size:10px;white-space:nowrap;}
+  /* Install banner */
+  .install-banner{
+    display:none;position:fixed;bottom:76px;left:12px;right:12px;z-index:55;
+    background:var(--ink);color:#fff;border-radius:14px;padding:14px 16px;
+    box-shadow:0 8px 28px rgba(0,0,0,0.3);font-size:14px;
+    align-items:center;gap:12px;
+  }
+  .install-banner.show{display:flex;}
+  .install-banner .ib-close{background:none;border:none;color:#fff;font-size:18px;cursor:pointer;opacity:0.7;margin-left:auto;}
+
+  /* mobile drawer */
+  .drawer{position:fixed;inset:0;z-index:70;background:rgba(26,27,46,.5);display:none;}
+  .drawer.open{display:block;}
+  .drawer-panel{position:absolute;right:0;top:0;bottom:0;width:78%;max-width:300px;background:var(--paper);padding:20px;overflow-y:auto;}
+  .drawer-panel a{display:block;padding:14px 8px;font-weight:700;font-size:16px;border-bottom:1px solid var(--mist);cursor:pointer;}
+  .drawer-loc{margin-top:14px;}
+  .drawer-loc select{width:100%;margin-bottom:10px;font-family:inherit;font-size:15px;padding:11px;border:1.5px solid var(--line);border-radius:10px;background:#fff;}
+  .gv-item{border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:10px;background:var(--paper-2);}
+  .gv-item-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
+  .gv-item-no{font-family:'Space Mono',monospace;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.5px;}
+  .gv-rm{border:none;background:transparent;color:var(--danger);font-size:14px;cursor:pointer;padding:2px 8px;border-radius:8px;line-height:1;}
+  .gv-rm:hover{background:rgba(210,74,61,.12);}
+  .gv-row3{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:10px;}
+  .gv-row3 .fg{margin-bottom:0;}
+  label.mini{font-size:12px;color:var(--muted);font-weight:600;margin-bottom:3px;display:block;}
+  .gv-summary{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-top:10px;background:#fff;font-size:13.5px;}
+  .gv-summary .row{display:flex;justify-content:space-between;padding:3px 0;color:var(--muted);}
+  .gv-summary .row span:last-child{color:var(--ink);font-variant-numeric:tabular-nums;}
+  .gv-summary .row.total{font-weight:800;color:var(--ink);border-top:1px solid var(--line);margin-top:5px;padding-top:7px;}
+  .gv-summary .row.total span:last-child{color:var(--pine-deep);}
+  @media(max-width:560px){ .gv-row3{grid-template-columns:1fr 1fr;} .gv-row3 .fg:first-child{grid-column:1 / -1;} }
+  .job-board{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:16px;}
+  .job-card{border:1px solid var(--line);border-radius:16px;padding:16px;background:#fff;display:flex;flex-direction:column;gap:8px;box-shadow:0 2px 10px rgba(26,27,46,.04);}
+  .job-top{display:flex;align-items:center;justify-content:space-between;}
+  .job-top .emo{font-size:24px;}
+  .job-amt{font-family:'Space Mono',monospace;font-weight:700;color:var(--pine-deep);background:var(--sky);padding:4px 10px;border-radius:999px;font-size:13px;white-space:nowrap;}
+  .job-title{font-weight:800;font-size:16px;line-height:1.25;color:var(--ink);}
+  .job-type{font-size:12px;color:var(--muted);font-weight:600;}
+  .job-desc{font-size:13.5px;color:#33343f;line-height:1.45;}
+  .job-locked{font-size:12.5px;color:var(--muted);background:var(--paper-2);border:1px dashed var(--line);border-radius:10px;padding:8px 10px;}
+  .job-reveal{font-size:13px;color:var(--pine-deep);font-weight:600;background:#eef7f3;border:1px solid #cfe8de;border-radius:10px;padding:8px 10px;}
+  .job-foot{margin-top:auto;display:flex;justify-content:flex-end;align-items:center;gap:6px;padding-top:4px;flex-wrap:wrap;}
+  .job-bids{font-size:12px;color:var(--blue);font-weight:700;}
+  .btn-xs{padding:5px 10px;font-size:12px;border-radius:9px;}
+  .post-item.col{flex-direction:column;align-items:stretch;gap:8px;}
+  .post-item.col .post-row{display:flex;align-items:center;gap:12px;}
+  .bidlist{display:flex;flex-direction:column;gap:7px;border-top:1px dashed var(--line);padding-top:9px;}
+  .bidrow{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;}
+  .bidwho{color:var(--ink);flex:1;min-width:160px;}
+  .bidnote{color:var(--muted);}
+  .bidact{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .bchip{font-family:'Space Mono',monospace;font-size:12px;font-weight:700;background:var(--paper-2);border:1px solid var(--line);border-radius:999px;padding:3px 9px;color:var(--ink);white-space:nowrap;}
+  .bchip.win{background:#e6f7ee;border-color:#bfe6cf;color:#137a43;}
+  .bchip.ctr{background:#fff4e0;border-color:#f0d9a8;color:var(--marigold-deep);}
+  .bchip.dec{background:#f6eceb;border-color:#e6c9c5;color:var(--danger);}
+  .bidempty{font-size:12.5px;color:var(--muted);border-top:1px dashed var(--line);padding-top:9px;}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="site">
+  <div class="wrap hd">
+    <div class="brand" onclick="go('home')">Your<b>Work</b>Do</div>
+    <nav class="mainnav" id="mainnav">
+      <a data-sec="home" onclick="go('home')">Home</a>
+      <a data-sec="services" onclick="go('services')">Services</a>
+      <a data-sec="hire" onclick="go('hire')">Hire help</a>
+      <a data-sec="work" onclick="go('work')">Find work</a>
+      <a data-sec="govt" onclick="go('govt')">Government</a>
+      <a data-sec="rules" onclick="go('rules')">Rules</a>
+    </nav>
+    <div class="loc">
+      <select id="stateSel" onchange="onStateChange()" aria-label="Select state"><option value="">State</option></select>
+      <select id="citySel" onchange="onCityChange()" aria-label="Select city"><option value="">City</option></select>
+    </div>
+    <div class="auth" id="authArea"></div>
+    <button class="burger" onclick="openDrawer()" aria-label="Menu">☰</button>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- HOME -->
+  <section class="section active" id="sec-home">
+    <div class="hero">
+      <span class="eyebrow">Real-world work · India</span>
+      <h1>Get any work done by a <span class="hl">verified local</span>.</h1>
+      <p class="lead">Hire help for a job, find work near you, or supply goods and custom fabrication to government offices — all in one place. Pick what you came for.</p>
+      <div class="audience">
+        <div class="aud" onclick="go('hire')">
+          <span class="emo">🙋</span>
+          <h3>I need help</h3>
+          <p>Post a job — cleaning, repairs, painting, bank errands and more — and verified workers reach out.</p>
+          <div class="go">Post a requirement →</div>
+        </div>
+        <div class="aud" onclick="go('work')">
+          <span class="emo">💪</span>
+          <h3>I want work</h3>
+          <p>Register your skills and the area you cover. We connect you with jobs posted nearby.</p>
+          <div class="go">Register as a worker →</div>
+        </div>
+        <div class="aud gov" onclick="go('govt')">
+          <span class="tag">For government offices</span>
+          <span class="emo">🏛️</span>
+          <h3>Government supply desk</h3>
+          <p>Post a sub-₹25,000 requirement — consumables, custom parts, furniture — and get a quotation.</p>
+          <div class="go">Request a quotation →</div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:46px;" id="homeJobsWrap">
+      <span class="eyebrow">For workers</span>
+      <h2 class="sec-h" style="font-size:1.7rem;">Looking for work?</h2>
+      <div style="background:#fff;border:2px solid var(--mist);border-radius:var(--r);padding:30px;margin-top:18px;text-align:center;">
+        <div style="font-size:3rem;margin-bottom:12px;">&#128170;</div>
+        <p style="font-size:1.05rem;font-weight:700;margin-bottom:8px;">If you want work, go to &quot;Find Work&quot; and create a worker profile.</p>
+        <p style="color:var(--muted);font-size:14px;margin-bottom:18px;">Register your skills, select your city, and see job posts from people near you. Apply and get hired.</p>
+        <button class="btn btn-green" onclick="go('work')">&#128270; Go to Find Work &#8594;</button>
+      </div>
+    </div>
+    <div style="margin-top:46px;">
+      <span class="eyebrow">All services</span>
+      <h2 class="sec-h" style="font-size:1.7rem;">If it has to be done in person, it’s a service.</h2>
+      <p class="sec-sub">Tap any service to fill a short form for that work. Don’t see yours? Pick <b>Other (custom)</b> and describe it.</p>
+      <div class="svc-grid" id="homeSvc" style="margin-top:22px;"></div>
+    </div>
+  </section>
+
+  <!-- SERVICES -->
+  <section class="section" id="sec-services">
+    <span class="eyebrow">All services</span>
+    <h2 class="sec-h">If it has to be done in person, it’s a service.</h2>
+    <p class="sec-sub">Tap any service to fill a short form for that work. Don’t see yours? Pick <b>Other (custom)</b> and describe it.</p>
+    <div class="svc-grid" id="allSvc" style="margin-top:30px;"></div>
+  </section>
+
+  <!-- HIRE -->
+  <section class="section" id="sec-hire">
+    <span class="eyebrow">For people who need help</span>
+    <h2 class="sec-h">Post your requirement</h2>
+    <p class="sec-sub">Fill this short proforma. After you post, verified workers near you can take it up and call you.</p>
+    <div class="formwrap" style="margin-top:26px;">
+      <div class="fg">
+        <label>Service needed <span class="req">*</span></label>
+        <select class="inp" id="hireService"></select>
+      </div>
+      <div class="fg" id="hireOtherWrap" style="display:none;">
+        <label>Describe the custom work <span class="req">*</span></label>
+        <input class="inp" id="hireOther" placeholder="e.g. Assemble flat-pack wardrobe and mount on wall">
+      </div>
+      <div class="fg">
+        <label>Title of the work <span class="req">*</span></label>
+        <input class="inp" id="hireTitle" placeholder="e.g. Paint 2BHK flat, 3 rooms">
+      </div>
+      <div class="fg">
+        <label>Describe the work <span class="req">*</span></label>
+        <textarea class="inp" id="hireDesc" placeholder="What needs doing, size/scope, materials provided or not…"></textarea>
+      </div>
+      <div class="grid2">
+        <div class="fg">
+          <label>Budget <span class="help">approx.</span></label>
+          <div class="rupee-in"><input class="inp" id="hireBudget" type="number" inputmode="numeric" placeholder="5000"></div>
+        </div>
+        <div class="fg">
+          <label>When do you need it?</label>
+          <input class="inp" id="hireWhen" type="date">
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="fg">
+          <label>State <span class="req">*</span></label>
+          <select class="inp" id="hireState" onchange="fillCities('hireState','hireCity')"></select>
+        </div>
+        <div class="fg">
+          <label>City <span class="req">*</span></label>
+          <select class="inp" id="hireCity"></select>
+        </div>
+      </div>
+      <div class="fg">
+        <label>Locality / address</label>
+        <input class="inp" id="hireAddr" placeholder="Area, landmark">
+      </div>
+      <div class="fg">
+        <label>Attach file <span class="help">photo, document (optional)</span></label>
+        <div class="file-in" onclick="el('hireFile').click()">
+          <span class="emo">📎</span>
+          <div class="ft">Click to attach a file</div>
+          <div class="fh">Image, PDF, or document (max 5MB)</div>
+          <input type="file" id="hireFile" accept="image/*,.pdf,.doc,.docx" onchange="onHireFileChange(this)">
+        </div>
+        <div class="file-name" id="hireFileName"></div>
+      </div>
+      <button class="btn btn-go btn-block" onclick="submitHire()" style="margin-top:6px;">📤 Post requirement</button>
+      <p style="font-size:12.5px;color:var(--muted);text-align:center;margin-top:10px;">By posting you agree to our <a onclick="openTerms()" style="color:var(--pine);font-weight:700;cursor:pointer;">Payment Terms &amp; Conditions</a>.</p>
+    </div>
+  </section>
+
+  <!-- WORK -->
+  <section class="section" id="sec-work">
+    <div id="workPageHeader">
+      <span class="eyebrow">For people who want work</span>
+      <h2 class="sec-h" id="workPageTitle">Register to get work nearby</h2>
+      <p class="sec-sub" id="workPageSub">Tell us what you do and where you work. We match you with jobs posted in your area.</p>
+    </div>
+    <div class="formwrap" style="margin-top:26px;" id="workerFormWrap">
+      <div class="grid2">
+        <div class="fg"><label>Your name <span class="req">*</span></label><input class="inp" id="wkName" placeholder="Full name"></div>
+        <div class="fg"><label>Mobile number <span class="req">*</span> <span class="help">(from your account)</span></label><input class="inp" id="wkMobile" type="tel" maxlength="10" placeholder="10-digit mobile" readonly style="background:var(--paper-2);cursor:not-allowed;"></div>
+      </div>
+      <div class="fg">
+        <label>What work can you do? <span class="req">*</span> <span class="help">pick all that apply</span></label>
+        <div class="chips" id="wkSkills"></div>
+      </div>
+      <div class="grid2">
+        <div class="fg">
+          <label>Experience</label>
+          <select class="inp" id="wkExp"><option>Less than 1 year</option><option>1–3 years</option><option>3–5 years</option><option>5+ years</option></select>
+        </div>
+        <div class="fg">
+          <label>Expected pay <span class="help">per day / per job</span></label>
+          <div class="rupee-in"><input class="inp" id="wkPay" type="number" inputmode="numeric" placeholder="600"></div>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="fg"><label>State <span class="req">*</span></label><select class="inp" id="wkState" onchange="fillCities('wkState','wkCity')"></select></div>
+        <div class="fg"><label>City <span class="req">*</span></label><select class="inp" id="wkCity"></select></div>
+      </div>
+      <div class="fg">
+        <label>Availability</label>
+        <select class="inp" id="wkAvail"><option>Full-time</option><option>Part-time</option><option>Weekends only</option><option>On call</option></select>
+      </div>
+      <div class="fg"><label>About you <span class="help">optional</span></label><textarea class="inp" id="wkBio" placeholder="Tools you have, languages you speak, areas you serve…"></textarea></div>
+      <button class="btn btn-green btn-block" onclick="submitWork()" style="margin-top:6px;">✅ Register as worker</button>
+    </div>
+
+    <!-- AVAILABLE WORK BOARD (for registered workers) -->
+    <div id="workBoardWrap">
+      <div id="workBoard" class="job-board"></div>
+    </div>
+  </section>
+
+  <!-- GOVERNMENT -->
+  <section class="section" id="sec-govt">
+    <span class="eyebrow">Government supply &amp; quotation desk</span>
+    <h2 class="sec-h">Supply to government offices — within the rules.</h2>
+    <p class="sec-sub">For petty / direct purchases up to <b>₹25,000</b>, and for custom or specialised items not readily available on GeM, post your requirement and we’ll send a documented quotation.</p>
+
+    <div class="limit-grid">
+      <div class="limit"><div class="amt">Up to ₹25,000</div><div class="lt">Direct purchase</div><div class="ld">GFR Rule 154 / GeM Rule 149(i): purchase without quotation or bidding, with a reasonableness certificate by the competent authority.</div></div>
+      <div class="limit"><div class="amt">₹25k – ₹2.5L</div><div class="lt">Purchase committee</div><div class="ld">GFR Rule 155: via a Local Purchase Committee. On GeM, from the lowest-priced seller of at least three makers.</div></div>
+      <div class="limit"><div class="amt">GeM first</div><div class="lt">Mandatory for listed items</div><div class="ld">Common goods/services on GeM must be bought through GeM (Rule 149). We focus on custom, fabricated and specialised items.</div></div>
+    </div>
+
+    <div class="formwrap" style="margin-top:26px;">
+      <div class="note-box"><span class="i">ℹ️</span><span>Posting here is a request for a quotation, not a purchase order. Final procurement remains the buyer’s responsibility under GFR/GeM rules. We’ll provide pricing, specs and supporting documents to help you place a compliant order.</span></div>
+      <div class="grid2">
+        <div class="fg"><label>Department / organisation <span class="req">*</span></label><input class="inp" id="gvOrg" placeholder="e.g. SAMEER, PQT Division"></div>
+        <div class="fg"><label>Contact person <span class="req">*</span></label><input class="inp" id="gvPerson" placeholder="Name &amp; designation"></div>
+      </div>
+      <div class="grid2">
+        <div class="fg"><label>Official email <span class="req">*</span></label><input class="inp" id="gvEmail" type="email" placeholder="name@dept.gov.in"></div>
+        <div class="fg"><label>Phone</label><input class="inp" id="gvPhone" type="tel" placeholder="Office number"></div>
+      </div>
+      <div class="fg"><label>Office / billing address <span class="help">appears on the quotation</span></label><textarea class="inp" id="gvAddr" rows="2" placeholder="Department / office address for the quotation"></textarea></div>
+      <div class="fg">
+        <label>What do you need? <span class="req">*</span></label>
+        <select class="inp" id="gvCat" onchange="onGvCat()"></select>
+      </div>
+      <div class="fg" id="gvCadWrap" style="display:none;">
+        <label>Upload CAD / drawing <span class="help">for custom fabrication &amp; machine parts</span></label>
+        <label class="file-in" for="gvCadFile">
+          <span class="emo">📐</span>
+          <span class="ft">Tap to upload your file</span>
+          <span class="fh">.dwg .dxf .step .stp .iges .igs .stl .pdf — we quote from your drawing</span>
+          <input type="file" id="gvCadFile" accept=".dwg,.dxf,.step,.stp,.iges,.igs,.stl,.pdf,.zip" onchange="onCadPick(this)">
+        </label>
+        <div class="file-name" id="gvCadName"></div>
+      </div>
+      <div class="grid2">
+        <div class="fg">
+          <label>Price basis</label>
+          <select class="inp" id="gvGstMode" onchange="gvLimitCheck()">
+            <option value="inclusive">Values include GST (18%)</option>
+            <option value="exclusive">Values are pre-tax (GST 18% extra)</option>
+          </select>
+        </div>
+        <div class="fg">
+          <label>Supply type <span class="help">sets the GST split</span></label>
+          <select class="inp" id="gvTaxMode" onchange="gvLimitCheck()">
+            <option value="intra">Within state — CGST + SGST</option>
+            <option value="inter">Inter-state — IGST</option>
+          </select>
+        </div>
+      </div>
+      <label style="font-weight:700;font-size:14px;display:block;margin:8px 0 4px;">Line items <span class="req">*</span> <span class="help">add as many as you need</span></label>
+      <div id="gvItems"></div>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="gvAddItem()">＋ Add another item</button>
+      <div id="gvLimitMsg" style="font-size:12px;margin-top:10px;"></div>
+      <div id="gvSummary" class="gv-summary" style="display:none;"></div>
+      <div class="grid2">
+        <div class="fg"><label>Delivery state</label><select class="inp" id="gvState" onchange="onGvState()"></select></div>
+        <div class="fg"><label>Delivery city</label><select class="inp" id="gvCity"></select></div>
+      </div>
+      <div class="fg"><label>Required by</label><input class="inp" id="gvBy" type="date"></div>
+      <button class="btn btn-ink btn-block" onclick="submitGovt()" style="margin-top:6px;background:var(--ink);">🏛️ Request quotation</button>
+    </div>
+  </section>
+
+  <!-- RULES -->
+  <section class="section" id="sec-rules">
+    <span class="eyebrow">Rules &amp; regulations</span>
+    <h2 class="sec-h">Your rights and the law, in plain terms.</h2>
+    <p class="sec-sub">Work on YourWorkDo follows Indian labour law and the country’s criminal law — which since 1 July 2024 is the Bharatiya Nyaya Sanhita (BNS), 2023, replacing the old Indian Penal Code (IPC).</p>
+    <div class="rules-grid" style="margin-top:28px;">
+      <div class="rule">
+        <span class="tag">Wages</span>
+        <h3>Minimum wage &amp; on-time pay</h3>
+        <p>Every worker must be paid at least the minimum wage notified for that state and skill, and paid on time. No illegal deductions.</p>
+        <div class="law">Code on Wages, 2019 · (Minimum Wages Act, 1948)</div>
+      </div>
+      <div class="rule">
+        <span class="tag">Hours</span>
+        <h3>Working hours &amp; overtime</h3>
+        <p>Normal work is about 8–9 hours a day and 48 a week. Work beyond that is overtime, usually paid at double the normal rate.</p>
+        <div class="law">Factories Act · State Shops &amp; Establishments Acts</div>
+      </div>
+      <div class="rule">
+        <span class="tag">Freedom</span>
+        <h3>No forced or bonded labour</h3>
+        <p>No one can be forced to work against their will or trapped in debt-bondage. Workers are free to accept or decline any job.</p>
+        <div class="law">Constitution Art. 23 · Bonded Labour System (Abolition) Act, 1976</div>
+      </div>
+      <div class="rule">
+        <span class="tag">Children</span>
+        <h3>No child labour</h3>
+        <p>No child under 14 may be engaged for work. We never list or accept tasks that put minors to work.</p>
+        <div class="law">Child &amp; Adolescent Labour (Prohibition &amp; Regulation) Act, 1986 (amended 2016)</div>
+      </div>
+      <div class="rule">
+        <span class="tag">Gig workers</span>
+        <h3>Social security for platform workers</h3>
+        <p>Platform and gig workers are formally recognised, with welfare and registration (e-Shram). Some states levy a welfare contribution on platforms.</p>
+        <div class="law">Code on Social Security, 2020 (in force Nov 2025) · Karnataka &amp; Rajasthan gig-worker laws</div>
+      </div>
+      <div class="rule">
+        <span class="tag">Honesty</span>
+        <h3>Fraud &amp; breach of trust are crimes</h3>
+        <p>Cheating a customer or worker, or misusing money or property entrusted to you, is a criminal offence — protecting both sides of every job.</p>
+        <div class="law">BNS, 2023 — Cheating §318 · Criminal breach of trust §316 (replacing IPC §420 / §405–409)</div>
+      </div>
+    </div>
+    <p class="disclaimer">This is general information to help you understand your rights, not legal advice. Exact wage rates, limits and rules vary by state and change over time — check the latest official notification or a qualified advisor for your specific case.</p>
+  </section>
+
+  <!-- PROFILE -->
+  <section class="section" id="sec-profile">
+    <span class="eyebrow">My account</span>
+    <h2 class="sec-h" id="profTitle">Your profile</h2>
+    <div id="profileBody" style="margin-top:26px;"></div>
+  </section>
+
+</main>
+
+<!-- FOOTER -->
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <div>
+        <div class="brand">Your<b style="color:var(--pine)">Work</b>Do</div>
+        <p>Real-world work, done by verified locals — for homes, businesses and government offices.</p>
+      </div>
+      <div class="foot-links">
+        <div class="foot-col">
+          <h4>Get started</h4>
+          <a onclick="go('hire')">Hire help</a>
+          <a onclick="go('work')">Find work</a>
+          <a onclick="go('govt')">Government desk</a>
+          <a onclick="go('services')">All services</a>
+        </div>
+        <div class="foot-col">
+          <h4>Trust &amp; legal</h4>
+          <a onclick="go('rules')">Rules &amp; rights</a>
+          <a onclick="openTerms()">Payment terms</a>
+          <a onclick="go('rules')">Labour law</a>
+        </div>
+      </div>
+    </div>
+    <div class="foot-base">
+      <span>© 2026 YourWorkDo · Made in India</span>
+      <span>Early-access concept · payments shown in demo mode</span>
+    </div>
+  </div>
+</footer>
+
+<!-- AUTH MODAL (login/register) -->
+<div class="overlay" id="authModal">
+  <div class="modal">
+    <button class="modal-x" onclick="closeModal('authModal')" aria-label="Close">✕</button>
+    <h2><span id="authIcon">🔐</span><span id="authTitle">Log in</span></h2>
+    <p class="msub" id="authSub">Enter your mobile number — we’ll send an OTP. No password to remember.</p>
+    <div class="tabs">
+      <button class="tab on" id="tabLogin" onclick="setAuthMode('login')">Log in</button>
+      <button class="tab" id="tabReg" onclick="setAuthMode('register')">Register</button>
+    </div>
+    <!-- step 1 -->
+    <div id="authStep1">
+      <div id="regNameRow" style="display:none;">
+        <div class="grid2">
+          <div class="fg"><label>First name <span class="req">*</span></label><input class="inp" id="regFirst" placeholder="First name"></div>
+          <div class="fg"><label>Last name</label><input class="inp" id="regLast" placeholder="Last name"></div>
+        </div>
+        <div class="fg">
+          <label>Account type <span class="req">*</span></label>
+          <select class="inp" id="regAcctType" onchange="onAcctType()">
+            <option value="Individual">Individual</option>
+            <option value="Private company">Private company</option>
+            <option value="Government (Central)">Government — Central</option>
+            <option value="Government (State)">Government — State</option>
+          </select>
+        </div>
+        <div id="regOrgWrap" style="display:none;">
+          <div class="fg"><label id="regOrgLabel">Company / organisation <span class="req">*</span></label><input class="inp" id="regOrg" placeholder="e.g. SAMEER, PQT Division"></div>
+          <div class="fg"><label>Office address <span class="help">used on quotations &amp; invoices</span></label><textarea class="inp" id="regAddr" rows="2" placeholder="Office / department address"></textarea></div>
+        </div>
+      </div>
+      <div class="fg"><label>Mobile number <span class="req">*</span></label><input class="inp" id="authMobile" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit mobile" style="text-align:center;letter-spacing:2px;font-size:18px;"></div>
+      <button class="btn btn-green btn-block" onclick="sendAuthOTP()">📩 Send OTP</button>
+    </div>
+    <!-- step 2 -->
+    <div id="authStep2" style="display:none;">
+      <p class="msub" id="otpSentMsg"></p>
+      <div class="demo-otp">Demo mode — your OTP is <b id="demoCode">0000</b></div>
+      <div class="otp-row" id="otpRow">
+        <input class="otp-box" maxlength="1" inputmode="numeric" oninput="otpNext(this)">
+        <input class="otp-box" maxlength="1" inputmode="numeric" oninput="otpNext(this)">
+        <input class="otp-box" maxlength="1" inputmode="numeric" oninput="otpNext(this)">
+        <input class="otp-box" maxlength="1" inputmode="numeric" oninput="otpNext(this)">
+      </div>
+      <button class="btn btn-green btn-block" onclick="verifyAuthOTP()">✅ Verify &amp; continue</button>
+    </div>
+  </div>
+</div>
+
+<!-- PROFORMA MODAL (service form launched from a tile) -->
+<div class="overlay" id="proformaModal">
+  <div class="modal wide">
+    <button class="modal-x" onclick="closeModal('proformaModal')" aria-label="Close">✕</button>
+    <h2><span id="pfEmo">🧰</span><span id="pfTitle">Service request</span></h2>
+    <p class="msub">Fill this proforma for the selected service. We’ll route it to verified workers near you.</p>
+    <input type="hidden" id="pfService">
+    <div class="fg" id="pfOtherWrap" style="display:none;">
+      <label>Describe the custom work <span class="req">*</span></label>
+      <input class="inp" id="pfOther" placeholder="Describe exactly what you need">
+    </div>
+    <div class="fg"><label>What needs doing? <span class="req">*</span></label><textarea class="inp" id="pfDesc" placeholder="Details, size/scope, when…"></textarea></div>
+    <div class="grid2">
+      <div class="fg"><label>Budget <span class="help">approx.</span></label><div class="rupee-in"><input class="inp" id="pfBudget" type="number" placeholder="1000"></div></div>
+      <div class="fg"><label>When?</label><input class="inp" id="pfWhen" type="date"></div>
+    </div>
+    <div class="grid2">
+      <div class="fg"><label>State</label><select class="inp" id="pfState" onchange="fillCities('pfState','pfCity')"></select></div>
+      <div class="fg"><label>City</label><select class="inp" id="pfCity"></select></div>
+    </div>
+    <button class="btn btn-go btn-block" onclick="submitProforma()">📤 Send request</button>
+  </div>
+</div>
+
+<!-- RAZORPAY-STYLE PAYMENT -->
+<div class="overlay" id="bidModal">
+  <div class="modal">
+    <button class="modal-x" onclick="closeModal('bidModal')" aria-label="Close">✕</button>
+    <h2><span id="bidEmo">💬</span><span id="bidTitle">Place your bid</span></h2>
+    <p class="msub" id="bidSub">Propose your rate for this work.</p>
+    <div class="fg"><label id="bidRateLabel">Your rate (₹) <span class="req">*</span></label><div class="rupee-in"><input class="inp" id="bidRate" type="number" inputmode="numeric" placeholder="Propose an amount"></div></div>
+    <div class="fg"><label>Message <span class="help">optional</span></label><textarea class="inp" id="bidNote" rows="2" placeholder="e.g. Includes materials; can start tomorrow."></textarea></div>
+    <button class="btn btn-go btn-block" id="bidSubmit" onclick="submitBid()">Place bid</button>
+  </div>
+</div>
+
+<div class="overlay" id="payModal">
+  <div class="modal" id="payInner">
+    <button class="modal-x" onclick="closeModal('payModal')" aria-label="Close" style="position:relative;z-index:2;">✕</button>
+    <div class="rzp-head">
+      <div class="rzp-merchant">
+        <div class="rzp-logo">Y</div>
+        <div><div class="mn">YourWorkDo</div><div class="ma">Secured by Razorpay (demo)</div></div>
+      </div>
+      <div class="rzp-amt" id="payAmt">₹0</div>
+      <div class="rzp-sub" id="payLabel" style="font-size:12.5px;opacity:.9;margin-top:2px;"></div>
+    </div>
+    <div class="rzp-body" id="payBody">
+      <div class="rzp-demo">⚠️ Demo checkout — no real money is charged. A live version connects Razorpay with backend keys.</div>
+      <div class="rzp-sec">Pay using UPI</div>
+      <div class="upi-apps" id="upiApps">
+        <div class="upi-app" onclick="pickUpi('gpay',this)"><span class="emo">🟢</span><span class="un">GPay</span></div>
+        <div class="upi-app" onclick="pickUpi('phonepe',this)"><span class="emo">🟣</span><span class="un">PhonePe</span></div>
+        <div class="upi-app" onclick="pickUpi('paytm',this)"><span class="emo">🔵</span><span class="un">Paytm</span></div>
+        <div class="upi-app" onclick="pickUpi('bhim',this)"><span class="emo">🟠</span><span class="un">BHIM</span></div>
+      </div>
+      <div class="rzp-or">— or enter UPI ID —</div>
+      <div class="fg"><input class="inp" id="upiId" placeholder="yourname@bank" style="text-align:center;"></div>
+      <button class="btn btn-green btn-block" id="payBtn" onclick="doPay()">Pay <span id="payBtnAmt"></span></button>
+      <p style="font-size:11.5px;color:var(--muted);text-align:center;margin-top:10px;">Your UPI PIN is never entered here — you approve the request in your own UPI app.</p>
+    </div>
+  </div>
+</div>
+
+<!-- TERMS MODAL -->
+<div class="overlay" id="termsModal">
+  <div class="modal wide">
+    <button class="modal-x" onclick="closeModal('termsModal')" aria-label="Close">&#10005;</button>
+    <h2><span>&#128220;</span><span>Terms &amp; Conditions</span></h2>
+    <p class="msub">By using YourWorkDo you agree to these terms. Read carefully.</p>
+    <div class="terms-body" style="font-size:13.5px;line-height:1.7;">
+      <h3>1. Platform Nature</h3>
+      <ul>
+        <li>YourWorkDo is a <b>service marketplace</b> connecting members with workers. We do not perform work ourselves.</li>
+        <li>We provide <b>no guarantee</b> of work quality. All agreements are between member and worker.</li>
+      </ul>
+      <h3>2. Display of Contact Information</h3>
+      <ul>
+        <li>By registering, you consent that YourWorkDo <b>has the right to display your mobile number</b> to workers who pay the fee to view contact details.</li>
+      </ul>
+      <h3>3. Liability Disclaimer</h3>
+      <ul>
+        <li>YourWorkDo is <b>not liable</b> for any loss, damage, misbehavior, or dispute from work performed.</li>
+        <li>If a worker misuses access or misbehaves, members must take action with authorities directly.</li>
+      </ul>
+      <h3>4. Member Rights</h3>
+      <ul>
+        <li>Members have <b>free choice</b> to select any worker comfortable for them.</li>
+        <li>Company provides nearby workers. Members must <b>ask worker for ID and visiting card</b>.</li>
+        <li>If worker refuses ID, do not proceed. Take action yourself.</li>
+      </ul>
+      <h3>5. Payments</h3>
+      <ul>
+        <li>Platform fee (&#8377;99) is non-refundable. Work payment is between member and worker.</li>
+      </ul>
+      <h3>6. Mandatory Pre-Legal Procedure</h3>
+      <ul>
+        <li><b>Before any legal action</b> against YourWorkDo, user MUST send <b>5 written reminders</b> via Contact Us with <b>minimum 2 days gap</b> between each.</li>
+        <li>Failure to do so = user liable to pay site owner <b>&#8377;1,00,000 per month</b> from case filing to case end.</li>
+      </ul>
+      <h3>7. Penalty for False Legal Claims</h3>
+      <ul>
+        <li>If a court finds the case wrong/frivolous, the filer is <b>liable to pay &#8377;50,00,000 (Fifty Lakhs)</b> to site owner <b>within 60 days</b>.</li>
+      </ul>
+      <h3>8. Jurisdiction</h3>
+      <ul>
+        <li>Governed by laws of India. Exclusive jurisdiction: <b>courts in Haryana</b>.</li>
+      </ul>
+      <p style="margin-top:14px;font-style:italic;color:var(--muted);font-size:12px;">Last updated: June 2026.</p>
+      <button class="btn btn-go btn-block" onclick="closeModal('termsModal')" style="margin-top:18px;">I Understand</button>
+    </div>
+  </div>
+</div>
+
+<!-- CONTACT US MODAL -->
+<div class="overlay" id="contactModal">
+  <div class="modal">
+    <button class="modal-x" onclick="closeModal('contactModal')">&#10005;</button>
+    <h2><span>&#128231;</span><span>Contact Us</span></h2>
+    <p class="msub">Send us a message and we'll get back to you.</p>
+    <div class="fg"><label>Your Name</label><input class="inp" id="contactName" readonly style="background:var(--paper-2);"></div>
+    <div class="fg"><label>Your Mobile</label><input class="inp" id="contactMobile" readonly style="background:var(--paper-2);"></div>
+    <div class="fg"><label>Subject <span class="req">*</span></label><input class="inp" id="contactSubject" placeholder="What is this about?"></div>
+    <div class="fg"><label>Message <span class="req">*</span></label><textarea class="inp" id="contactMsg" placeholder="Describe your issue or question..." rows="4"></textarea></div>
+    <button class="btn btn-go btn-block" onclick="sendContactMsg()">&#128228; Send Message</button>
+    <p style="font-size:12px;color:var(--muted);text-align:center;margin-top:10px;">Our team will respond within 24 hours.</p>
+  </div>
+</div>
+
+<!-- TERMS ACCEPT (after registration) -->
+<div class="overlay" id="termsAcceptModal">
+  <div class="modal wide">
+    <h2><span>&#128203;</span><span>Accept Terms &amp; Conditions</span></h2>
+    <p class="msub">Please read and accept before continuing.</p>
+    <div style="max-height:300px;overflow-y:auto;border:1.5px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px;font-size:13px;line-height:1.7;background:#fff;">
+      <ul style="margin:0;padding-left:18px;">
+        <li>YourWorkDo connects members with workers. We do <b>not guarantee work quality</b>.</li>
+        <li>Platform <b>has the right to display your number</b> to workers who pay &#8377;99.</li>
+        <li>Platform is <b>not liable</b> for worker misbehavior or damage. Take action with authorities yourself.</li>
+        <li>Members must <b>ask worker for ID and visiting card</b>. If refused, do not proceed.</li>
+        <li><b>Before legal action:</b> send 5 reminders via Contact Us (2-day gap each). Failure = &#8377;1 lakh/month penalty.</li>
+        <li><b>False legal cases:</b> filer pays &#8377;50 lakhs within 60 days if case dismissed.</li>
+        <li>Jurisdiction: Haryana courts, India.</li>
+      </ul>
+      <p style="margin-top:8px;"><a onclick="closeModal('termsAcceptModal');openTerms();" style="color:var(--pine);font-weight:700;cursor:pointer;">Read full Terms &#8594;</a></p>
+    </div>
+    <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;margin-bottom:16px;">
+      <input type="checkbox" id="termsCheck" style="width:20px;height:20px;margin-top:2px;flex-shrink:0;">
+      <span style="font-size:13.5px;font-weight:600;">I accept the Terms &amp; Conditions and understand YourWorkDo is not liable for worker actions.</span>
+    </label>
+    <button class="btn btn-go btn-block" onclick="acceptTerms()">&#9989; Accept &amp; Continue</button>
+  </div>
+</div>
+
+<!-- HIRE SUCCESS DIALOG -->
+<div class="overlay" id="hireSuccessModal">
+  <div class="modal" style="text-align:center;">
+    <div style="font-size:56px;margin-bottom:14px;">✅</div>
+    <h2 style="justify-content:center;">Your Ad Submitted Successfully!</h2>
+    <p class="msub" style="max-width:38ch;margin:8px auto 18px;">Your requirement is now live. Verified workers near you will see it and apply shortly.</p>
+    <div style="background:var(--pine-soft);border-radius:12px;padding:14px 18px;margin-bottom:18px;text-align:left;">
+      <p style="font-weight:700;font-size:14px;color:var(--pine);margin-bottom:6px;">What happens next?</p>
+      <ul style="margin:0;padding-left:18px;font-size:13.5px;color:var(--ink);line-height:1.7;">
+        <li>Workers in your area will see your post instantly</li>
+        <li>You'll receive bids with price and message</li>
+        <li>Pick the best worker and start the job</li>
+      </ul>
+    </div>
+    <button class="btn btn-go btn-block" onclick="closeModal('hireSuccessModal');go('home');">🏠 Go to Home</button>
+    <button class="btn btn-ghost btn-block" onclick="closeModal('hireSuccessModal');" style="margin-top:10px;">Post Another Requirement</button>
+  </div>
+</div>
+
+<!-- WORKER REGISTER PROMPT DIALOG -->
+<div class="overlay" id="workerRegisterModal">
+  <div class="modal" style="text-align:center;">
+    <div style="font-size:56px;margin-bottom:14px;">👷</div>
+    <h2 style="justify-content:center;">Register as a Worker First</h2>
+    <p class="msub" style="max-width:40ch;margin:8px auto 18px;">To view and apply to available work posts, you need to register as a worker with your skills and city.</p>
+    <div style="background:#FFF4D6;border:1.5px dashed var(--marigold-deep);border-radius:12px;padding:14px 18px;margin-bottom:18px;text-align:left;">
+      <p style="font-weight:700;font-size:14px;color:#7a5a06;margin-bottom:6px;">Why register?</p>
+      <ul style="margin:0;padding-left:18px;font-size:13.5px;color:var(--ink);line-height:1.7;">
+        <li>See work posts in your city only</li>
+        <li>Apply and bid on jobs directly</li>
+        <li>Build your profile and get hired</li>
+      </ul>
+    </div>
+    <button class="btn btn-green btn-block" onclick="closeModal('workerRegisterModal');scrollToWorkerForm();">✅ Register as Worker Now</button>
+    <button class="btn btn-ghost btn-block" onclick="closeModal('workerRegisterModal');" style="margin-top:10px;">Maybe Later</button>
+  </div>
+</div>
+
+<!-- CHAT MODAL -->
+<div class="overlay" id="chatModal">
+  <div class="modal" style="max-width:520px;">
+    <button class="modal-x" onclick="closeModal('chatModal')">✕</button>
+    <h2><span>💬</span><span>Chat</span></h2>
+    <div id="chatHeaderInfo" style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13.5px;"></div>
+    <div id="chatMessages" style="height:280px;overflow-y:auto;border:1.5px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;background:#fafaf7;margin-bottom:12px;"></div>
+    <div style="display:flex;gap:8px;">
+      <input class="inp" id="chatInput" placeholder="Type a message..." style="flex:1;" onkeydown="if(event.key==='Enter')sendChat()">
+      <button class="btn btn-green" onclick="sendChat()">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- PROFILE VIEW MODAL -->
+<div class="overlay" id="profileViewModal">
+  <div class="modal">
+    <button class="modal-x" onclick="closeModal('profileViewModal')">✕</button>
+    <div id="profileViewBody"></div>
+  </div>
+</div>
+
+<!-- NOTIFICATION PANEL -->
+<div class="overlay" id="notifModal">
+  <div class="modal">
+    <button class="modal-x" onclick="closeModal('notifModal')">✕</button>
+    <h2><span>🔔</span><span>Notifications</span></h2>
+    <div id="notifList" style="max-height:400px;overflow-y:auto;"></div>
+    <button class="btn btn-ghost btn-block" onclick="clearNotifs();closeModal('notifModal');" style="margin-top:12px;">Clear all</button>
+  </div>
+</div>
+
+<!-- MOBILE DRAWER -->
+<div class="drawer" id="drawer" onclick="if(event.target.id==='drawer')closeDrawer()">
+  <div class="drawer-panel">
+    <a onclick="go('home');closeDrawer()">Home</a>
+    <a onclick="go('services');closeDrawer()">Services</a>
+    <a onclick="go('hire');closeDrawer()">Hire help</a>
+    <a onclick="go('work');closeDrawer()">Find work</a>
+    <a onclick="go('govt');closeDrawer()">Government</a>
+    <a onclick="go('rules');closeDrawer()">Rules</a>
+    <div class="drawer-loc">
+      <select id="stateSelM" onchange="onStateChangeM()"><option value="">Select state</option></select>
+      <select id="citySelM" onchange="onCityChangeM()"><option value="">Select city</option></select>
+    </div>
+    <div id="drawerAuth" style="margin-top:14px;"></div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ===== India states & major cities ===== */
+  var INDIA = {
+    "Andhra Pradesh":["Visakhapatnam","Vijayawada","Guntur","Nellore","Kurnool","Rajahmundry","Kakinada","Tirupati","Anantapur","Kadapa","Eluru","Ongole","Chittoor","Srikakulam","Vizianagaram","Machilipatnam","Tenali","Proddatur","Adoni","Hindupur","Bhimavaram","Chilakaluripet","Gudivada","Narasaraopet","Tadepalligudem","Tadpatri","Dharmavaram","Madanapalle","Srikalahasti","Guntakal","Nandyal","Amaravati","Mangalagiri","Narasapuram","Palasa Kasibugga","Repalle"],
+    "Arunachal Pradesh":["Itanagar","Naharlagun","Pasighat","Tawang","Bomdila","Ziro","Tezu","Along","Namsai","Roing","Khonsa","Daporijo","Seppa","Changlang","Yingkiong"],
+    "Assam":["Guwahati","Dispur","Silchar","Dibrugarh","Jorhat","Nagaon","Tinsukia","Tezpur","Bongaigaon","Goalpara","Barpeta","Dhubri","Karimganj","Sivasagar","Diphu","Golaghat","North Lakhimpur","Mangaldoi","Nalbari","Kokrajhar","Hailakandi","Hojai","Haflong","Morigaon","Rangia","Lumding","Digboi","Margherita","Lakhimpur","Dhemaji"],
+    "Bihar":["Patna","Gaya","Bhagalpur","Muzaffarpur","Darbhanga","Purnia","Begusarai","Arrah","Chapra","Katihar","Munger","Biharsharif","Saharsa","Sasaram","Hajipur","Dehri","Siwan","Motihari","Bettiah","Buxar","Kishanganj","Jamui","Aurangabad","Jehanabad","Sitamarhi","Samastipur","Madhubani","Nawada","Lakhisarai","Supaul","Bagaha","Forbesganj","Bodh Gaya","Jamalpur","Khagaria","Araria","Gopalganj","Sheikhpura","Banka"],
+    "Chhattisgarh":["Raipur","Bhilai","Bilaspur","Durg","Korba","Rajnandgaon","Raigarh","Jagdalpur","Ambikapur","Dhamtari","Mahasamund","Kanker","Kawardha","Janjgir","Champa","Chirmiri","Bhatapara","Dalli Rajhara","Kondagaon","New Raipur","Mungeli","Bemetra","Dongargarh","Sakti","Tilda","Bhanupratappur","Bijapur","Dantewada"],
+    "Goa":["Panaji","Margao","Vasco da Gama","Mapusa","Ponda","Bicholim","Curchorem","Calangute","Candolim","Cuncolim","Sanquelim","Quepem","Canacona","Pernem","Valpoi","Sanguem","Mormugao"],
+    "Gujarat":["Ahmedabad","Surat","Vadodara","Rajkot","Bhavnagar","Jamnagar","Gandhinagar","Junagadh","Gandhidham","Anand","Nadiad","Navsari","Morbi","Bharuch","Mehsana","Bhuj","Surendranagar","Valsad","Vapi","Veraval","Porbandar","Godhra","Palanpur","Botad","Patan","Dahod","Amreli","Dwarka","Ankleshwar","Kalol","Halol","Himmatnagar","Deesa","Jetpur","Gondal","Mandvi","Modasa","Wadhwan","Palitana","Bardoli","Visnagar"],
+    "Haryana":["Gurugram","Faridabad","Panipat","Ambala","Yamunanagar","Rohtak","Hisar","Karnal","Sonipat","Panchkula","Bhiwani","Sirsa","Bahadurgarh","Jind","Kaithal","Rewari","Palwal","Kurukshetra","Fatehabad","Narnaul","Thanesar","Tohana","Hansi","Gohana","Mandi Dabwali","Manesar","Pinjore","Kalka","Charkhi Dadri","Nuh","Jhajjar","Pundri","Hodal","Pehowa"],
+    "Himachal Pradesh":["Shimla","Mandi","Solan","Dharamshala","Baddi","Nahan","Hamirpur","Bilaspur","Una","Kullu","Manali","Palampur","Chamba","Sundarnagar","Paonta Sahib","Nalagarh","Kangra","Dalhousie","Kasauli","Parwanoo","Jogindarnagar","Rampur","Reckong Peo","Keylong","Ghumarwin","Nurpur"],
+    "Jharkhand":["Ranchi","Jamshedpur","Dhanbad","Bokaro Steel City","Deoghar","Hazaribagh","Giridih","Ramgarh","Phusro","Daltonganj","Chaibasa","Chirkunda","Dumka","Gumla","Sahibganj","Chatra","Lohardaga","Pakaur","Jhumri Tilaiya","Simdega","Khunti","Garhwa","Madhupur","Chakradharpur","Koderma","Latehar","Mihijam","Seraikela"],
+    "Karnataka":["Bengaluru","Mysuru","Hubballi","Dharwad","Mangaluru","Belagavi","Kalaburagi","Davanagere","Ballari","Vijayapura","Shivamogga","Tumakuru","Raichur","Bidar","Hosapete","Hassan","Gadag","Udupi","Chitradurga","Kolar","Mandya","Chikkamagaluru","Bagalkot","Robertsonpet","Ranebennur","Karwar","Chikballapur","Ramanagara","Chamarajanagar","Bhadravati","Gangawati","Sirsi","Yadgir","Koppal","Haveri","Sindhnur","Nipani","Tiptur","Bhalki","Madikeri","Sagar","Kundapura","Puttur","Gokak"],
+    "Kerala":["Thiruvananthapuram","Kochi","Kozhikode","Thrissur","Kollam","Kannur","Alappuzha","Palakkad","Malappuram","Kottayam","Pathanamthitta","Painavu","Kalpetta","Kasaragod","Manjeri","Thalassery","Ponnani","Vadakara","Kayamkulam","Neyyattinkara","Nedumangad","Attingal","Chalakudy","Perinthalmanna","Tirur","Kanhangad","Taliparamba","Kunnamkulam","Guruvayur","Changanacherry","Thodupuzha","Muvattupuzha","Perumbavoor","Aluva","Kalamassery","Cherthala","Mavelikkara","Punalur","Varkala","Munnar","Kovalam","Kumarakom"],
+    "Madhya Pradesh":["Bhopal","Indore","Gwalior","Jabalpur","Ujjain","Sagar","Satna","Ratlam","Rewa","Dewas","Singrauli","Burhanpur","Khandwa","Morena","Bhind","Chhindwara","Vidisha","Guna","Shivpuri","Mandsaur","Neemuch","Damoh","Chhatarpur","Khargone","Sehore","Hoshangabad","Itarsi","Betul","Datia","Nagda","Pithampur","Sarni","Shahdol","Dhar","Balaghat","Mandla","Sidhi","Tikamgarh","Rajgarh","Sheopur","Panna","Harda","Katni","Pachmarhi","Khajuraho","Maihar","Mhow","Sironj","Seoni"],
+    "Maharashtra":["Mumbai","Pune","Nagpur","Nashik","Thane","Navi Mumbai","Chhatrapati Sambhajinagar","Solapur","Amravati","Kolhapur","Sangli","Jalgaon","Akola","Latur","Dhule","Ahmadnagar","Chandrapur","Parbhani","Nanded","Ichalkaranji","Jalna","Bhiwandi","Panvel","Malegaon","Beed","Yavatmal","Dharashiv","Nandurbar","Wardha","Gondia","Satara","Barshi","Hinganghat","Bhusawal","Pandharpur","Vasai-Virar","Ratnagiri","Baramati","Shrirampur","Karad","Gadchiroli","Washim","Pen","Lonavala","Mahabaleshwar","Shirdi","Boisar","Kalyan","Ulhasnagar","Pimpri-Chinchwad","Ambernath","Badlapur","Sawantwadi","Alibag","Udgir"],
+    "Manipur":["Imphal","Thoubal","Bishnupur","Kakching","Lamka","Senapati","Ukhrul","Tamenglong","Jiribam","Moreh","Moirang","Nambol","Kangpokpi","Mayang Imphal","Lilong"],
+    "Meghalaya":["Shillong","Tura","Jowai","Nongpoh","Williamnagar","Baghmara","Nongstoin","Resubelpara","Mairang","Sohra","Mawlai"],
+    "Mizoram":["Aizawl","Lunglei","Champhai","Serchhip","Kolasib","Saiha","Lawngtlai","Mamit","Khawzawl","Hnahthial","Bairabi","Vairengte"],
+    "Nagaland":["Kohima","Dimapur","Mokokchung","Tuensang","Wokha","Zunheboto","Mon","Phek","Kiphire","Peren","Chumukedima","Longleng","Pfutsero","Medziphema"],
+    "Odisha":["Bhubaneswar","Cuttack","Rourkela","Berhampur","Sambalpur","Puri","Balasore","Bhadrak","Baripada","Jharsuguda","Jeypore","Bargarh","Bhawanipatna","Paradip","Angul","Dhenkanal","Kendujhar","Rayagada","Koraput","Sundargarh","Talcher","Jajpur","Nabarangpur","Balangir","Phulbani","Sunabeda","Rajagangapur","Barbil","Jatani","Kendrapara","Nayagarh","Titlagarh","Malkangiri","Konark","Joda","Choudwar","Khordha"],
+    "Punjab":["Ludhiana","Amritsar","Jalandhar","Patiala","Bathinda","Mohali","Hoshiarpur","Pathankot","Batala","Moga","Abohar","Malerkotla","Khanna","Phagwara","Sri Muktsar Sahib","Barnala","Firozpur","Kapurthala","Rajpura","Sangrur","Fazilka","Gurdaspur","Kotkapura","Faridkot","Sunam","Mansa","Nabha","Nawanshahr","Zirakpur","Dera Bassi","Fatehgarh Sahib","Tarn Taran","Rupnagar","Nangal","Anandpur Sahib","Mandi Gobindgarh","Samana","Jagraon","Dhuri","Kharar"],
+    "Rajasthan":["Jaipur","Jodhpur","Kota","Bikaner","Ajmer","Udaipur","Bhilwara","Alwar","Sikar","Sri Ganganagar","Bharatpur","Pali","Tonk","Hanumangarh","Beawar","Kishangarh","Sawai Madhopur","Churu","Jhunjhunu","Nagaur","Banswara","Barmer","Dhaulpur","Gangapur City","Sujangarh","Makrana","Chittaurgarh","Sardarshahar","Nathdwara","Bundi","Jaisalmer","Dausa","Pushkar","Mount Abu","Nimbahera","Dungarpur","Pratapgarh","Rajsamand","Phalodi","Jhalawar","Baran","Sirohi","Fatehpur","Ramganj Mandi","Suratgarh","Kuchaman City","Nokha","Pilani","Neemrana","Bhiwadi"],
+    "Sikkim":["Gangtok","Namchi","Geyzing","Mangan","Singtam","Rangpo","Jorethang","Rhenock","Pelling","Nayabazar","Melli"],
+    "Tamil Nadu":["Chennai","Coimbatore","Madurai","Tiruchirappalli","Salem","Tirunelveli","Tiruppur","Vellore","Erode","Thoothukudi","Dindigul","Thanjavur","Hosur","Nagercoil","Kanchipuram","Kumbakonam","Karur","Cuddalore","Sivakasi","Pollachi","Rajapalayam","Pudukkottai","Neyveli","Nagapattinam","Dharmapuri","Karaikudi","Tiruvannamalai","Namakkal","Krishnagiri","Ramanathapuram","Virudhunagar","Tindivanam","Arakkonam","Mettupalayam","Gudiyatham","Chidambaram","Mayiladuthurai","Tenkasi","Udhagamandalam","Kodaikanal","Mamallapuram","Sankarankoil","Sankari","Gobichettipalayam","Theni","Udumalaipettai","Tiruchengode","Arani","Aruppukkottai","Sirkali","Palani","Ambur","Tirupathur"],
+    "Telangana":["Hyderabad","Warangal","Nizamabad","Karimnagar","Khammam","Ramagundam","Mahbubnagar","Nalgonda","Adilabad","Suryapet","Miryalaguda","Siddipet","Jagtial","Mancherial","Kothagudem","Sangareddy","Bodhan","Mahabubabad","Vikarabad","Kamareddy","Wanaparthy","Nagarkurnool","Bhongir","Zahirabad","Tandur","Jangaon","Bhadrachalam","Gadwal","Medak","Sircilla","Koratla","Palwancha","Secunderabad","Kodad","Bellampalle"],
+    "Tripura":["Agartala","Udaipur","Dharmanagar","Kailasahar","Belonia","Khowai","Ambassa","Teliamura","Sabroom","Kamalpur","Sonamura","Santirbazar","Ranirbazar","Amarpur"],
+    "Uttar Pradesh":["Lucknow","Kanpur","Agra","Varanasi","Prayagraj","Meerut","Ghaziabad","Noida","Greater Noida","Bareilly","Aligarh","Moradabad","Saharanpur","Gorakhpur","Firozabad","Jhansi","Muzaffarnagar","Mathura","Ayodhya","Rampur","Shahjahanpur","Farrukhabad","Hapur","Etawah","Mirzapur","Bulandshahr","Sambhal","Amroha","Hardoi","Fatehpur","Rae Bareli","Orai","Sitapur","Bahraich","Modinagar","Unnao","Jaunpur","Lakhimpur","Hathras","Banda","Pilibhit","Barabanki","Khurja","Gonda","Mainpuri","Lalitpur","Etah","Deoria","Ghazipur","Sultanpur","Azamgarh","Bijnor","Budaun","Basti","Vrindavan","Kasganj","Kannauj","Mau","Ballia","Bhadohi","Chandausi","Loni","Tundla","Najibabad","Dadri","Khair","Sikandrabad","Renukoot","Robertsganj"],
+    "Uttarakhand":["Dehradun","Haridwar","Roorkee","Haldwani","Rudrapur","Kashipur","Rishikesh","Nainital","Mussoorie","Kotdwara","Ramnagar","Pithoragarh","Almora","Pauri","Kichha","Jaspur","Manglaur","Sitarganj","Bageshwar","New Tehri","Srinagar","Khatima","Gopeshwar","Joshimath","Tanakpur","Champawat","Uttarkashi","Karnaprayag","Rudraprayag","Ranikhet","Lansdowne","Auli","Badrinath","Gangotri","Chamoli","Pantnagar"],
+    "West Bengal":["Kolkata","Howrah","Durgapur","Asansol","Siliguri","Bardhaman","Malda","Berhampore","Habra","Kharagpur","Santipur","Krishnanagar","Nabadwip","Medinipur","Haldia","Raiganj","Jalpaiguri","Darjeeling","Kalimpong","Cooch Behar","Bankura","Purulia","Bishnupur","Bolpur","Chinsurah","Chandannagar","Serampore","Barrackpur","Naihati","Halisahar","Kanchrapara","Bansberia","Bhatpara","Rishra","Konnagar","Uttarpara","Baidyabati","Champdani","Barasat","Madhyamgram","Basirhat","Bongaon","Ranaghat","Kalyani","Diamond Harbour","Budge Budge","Rajpur Sonarpur","Baruipur","Bidhannagar","Jhargram","Tamluk","Contai","Egra","Ghatal","Arambagh","Memari","Katwa","Dankuni","Alipurduar","Mainaguri","Dhupguri","Islampur","Tufanganj","Dinhata","Rampurhat","Suri","Sainthia","Kurseong","Mirik","Raghunathpur","Jiaganj Azimganj","Dhulian","Jangipur","Mathabhanga","Gangarampur","Balurghat"],
+    "Andaman & Nicobar Islands":["Port Blair","Bambooflat","Garacharma","Prothrapur","Rangat","Mayabunder","Car Nicobar","Hut Bay","Diglipur"],
+    "Chandigarh":["Chandigarh","Mohali","Panchkula"],
+    "Dadra & Nagar Haveli and Daman & Diu":["Silvassa","Daman","Diu","Naroli","Amli","Ghoghla","Vapi"],
+    "Delhi":["New Delhi","Delhi","Dwarka","Rohini","Pitampura","Najafgarh","Narela","Karol Bagh","Saket","Janakpuri","Connaught Place"],
+    "Jammu & Kashmir":["Srinagar","Jammu","Anantnag","Baramulla","Sopore","Kathua","Udhampur","Poonch","Rajauri","Kupwara","Pulwama","Budgam","Bandipore","Ganderbal","Kulgam","Shopian","Handwara","Samba","Reasi","Ramban","Kishtwar","Doda","Bhaderwah","Pahalgam","Gulmarg","Katra","Akhnoor"],
+    "Ladakh":["Leh","Kargil","Diskit","Dras","Choglamsar","Nubra","Padum","Khaltse"],
+    "Lakshadweep":["Kavaratti","Agatti","Amini","Minicoy","Andrott","Kalpeni"],
+    "Puducherry":["Puducherry","Karaikal","Yanam","Mahe","Ozhukarai"]
+  };
+
+  /* ===== services ===== */
+  var SERVICES = [
+    {k:"clean",emo:"🧹",nm:"Cleaning"},
+    {k:"paint",emo:"🎨",nm:"Painting"},
+    {k:"plumb",emo:"🔧",nm:"Plumber"},
+    {k:"elec",emo:"💡",nm:"Electrician"},
+    {k:"carp",emo:"🪚",nm:"Carpenter"},
+    {k:"ac",emo:"❄️",nm:"AC / Appliance"},
+    {k:"bank",emo:"🏦",nm:"Bank / Errand"},
+    {k:"carry",emo:"📦",nm:"Shifting / Carry"},
+    {k:"cook",emo:"🍲",nm:"Cooking"},
+    {k:"garden",emo:"🌱",nm:"Gardening"},
+    {k:"drive",emo:"🚗",nm:"Driver"},
+    {k:"elder",emo:"👵",nm:"Elder care"},
+    {k:"pest",emo:"🐜",nm:"Pest control"},
+    {k:"laundry",emo:"🧺",nm:"Laundry"},
+    {k:"tutor",emo:"📚",nm:"Tutoring"},
+    {k:"itrepair",emo:"💻",nm:"Computer / IT"},
+    {k:"cctv",emo:"📹",nm:"CCTV / Network"},
+    {k:"event",emo:"🎉",nm:"Event help"},
+    {k:"other",emo:"➕",nm:"Other (custom)"}
+  ];
+  function svcOf(k){ for(var i=0;i<SERVICES.length;i++){ if(SERVICES[i].k===k) return SERVICES[i]; } return SERVICES[0]; }
+
+  /* ===== government categories ===== */
+  var GOV_CATS = [
+    "Printer cartridges / consumables",
+    "Computer parts & peripherals",
+    "Office furniture",
+    "Painting / whitewashing work",
+    "Customised printing",
+    "Scientific / lab equipment & spares",
+    "Custom fabrication / machine parts (CAD)",
+    "Electrical / maintenance work",
+    "Annual maintenance (AMC) service",
+    "Other (custom requirement)"
+  ];
+
+  /* ===== state + storage ===== */
+  var S = { user:null, location:{state:"",city:""}, posts:[], worker:null, unlocked:[], notifs:[], chats:{}, auth:{mode:"login",mobile:"",code:"",pending:null}, pay:{amount:0,app:null,after:null}, wkSkills:[] };
+
+  function save(){ try{
+    localStorage.setItem("ywd2_user",JSON.stringify(S.user));
+    localStorage.setItem("ywd2_loc",JSON.stringify(S.location));
+    localStorage.setItem("ywd2_posts",JSON.stringify(S.posts));
+    localStorage.setItem("ywd2_worker",JSON.stringify(S.worker));
+    localStorage.setItem("ywd2_unlocked",JSON.stringify(S.unlocked));
+    localStorage.setItem("ywd2_notifs",JSON.stringify(S.notifs||[]));
+    localStorage.setItem("ywd2_chats",JSON.stringify(S.chats||{}));
+  }catch(e){} }
+  function load(){ try{
+    var u=localStorage.getItem("ywd2_user"); if(u)S.user=JSON.parse(u);
+    var l=localStorage.getItem("ywd2_loc"); if(l)S.location=JSON.parse(l);
+    var p=localStorage.getItem("ywd2_posts"); if(p)S.posts=JSON.parse(p);
+    var w=localStorage.getItem("ywd2_worker"); if(w)S.worker=JSON.parse(w);
+    var un=localStorage.getItem("ywd2_unlocked"); if(un)S.unlocked=JSON.parse(un);
+    var nf=localStorage.getItem("ywd2_notifs"); if(nf)S.notifs=JSON.parse(nf);
+    var ch=localStorage.getItem("ywd2_chats"); if(ch)S.chats=JSON.parse(ch);
+    if(S.user && !S.user.joined){ S.user.joined=Date.now(); }
+  }catch(e){} }
+
+  var SIX_MONTHS = 1000*60*60*24*182;
+  function isFreeWindow(){ return !!(S.user && S.user.joined && (Date.now()-S.user.joined < SIX_MONTHS)); }
+  function isUnlocked(id){ return S.unlocked && S.unlocked.indexOf(id)>-1; }
+  function findPost(id){ for(var i=0;i<S.posts.length;i++){ if(S.posts[i].id===id) return S.posts[i]; } return null; }
+  function isMyPost(p){ if(!S.user || !p) return false; return !!(p.byMobile && p.byMobile===S.user.mobile); }
+  function applyFee(budget){ var b=parseInt(budget,10)||0; if(b<=5000) return 50; if(b<=25000) return 100; return Math.round(b*0.02); }
+
+  function seedPosts(){
+    if(S.posts && S.posts.length) return;
+    var now=Date.now(), H=3600000;
+    S.posts=[
+      {id:uid(), ts:now-1*H,  status:"open", by:"Anita Sharma",   type:"hire", service:"clean",    emo:"🧹", title:"Deep clean 2BHK before the festival",       desc:"Full home deep cleaning — kitchen, 2 bathrooms, balcony. Cleaning materials will be provided.",        budget:"3500",  state:"Maharashtra",    city:"Pune",          applicants:2},
+      {id:uid(), ts:now-2*H,  status:"open", by:"Rahul Verma",     type:"hire", service:"plumb",    emo:"🔧", title:"Fix leaking kitchen tap & fit a new mixer",    desc:"Two taps dripping; replace with a new mixer (will provide). Roughly an hour's work.",                   budget:"800",   state:"Delhi",          city:"New Delhi",     applicants:1},
+      {id:uid(), ts:now-3*H,  status:"open", by:"Sunita Rao",      type:"hire", service:"bank",     emo:"🏦", title:"Bank passbook update & bill payment",           desc:"Update SBI passbook and pay an electricity bill at the office. Documents ready for pickup.",            budget:"400",   state:"Karnataka",      city:"Bengaluru",     applicants:0},
+      {id:uid(), ts:now-5*H,  status:"open", by:"Imran Sheikh",    type:"hire", service:"paint",    emo:"🎨", title:"Paint 2BHK flat — 3 rooms + hall",              desc:"Walls and ceiling: one primer + two coats. Putty work where needed. Paint will be supplied.",          budget:"18000", state:"Uttar Pradesh",  city:"Lucknow",       applicants:3},
+      {id:uid(), ts:now-6*H,  status:"open", by:"Priya Nair",      type:"hire", service:"elder",    emo:"👵", title:"Day-time companion for my mother",              desc:"Gentle company, meals and medicine reminders, light help — 9am to 5pm on weekdays.",                   budget:"12000", state:"Kerala",         city:"Kochi",         applicants:1},
+      {id:uid(), ts:now-7*H,  status:"open", by:"Arjun Mehta",     type:"hire", service:"ac",       emo:"❄️", title:"Service 3 split ACs + gas top-up",              desc:"Annual servicing of three 1.5-ton split ACs; one needs a gas refill. Before summer, please.",          budget:"4500",  state:"Gujarat",        city:"Ahmedabad",     applicants:0},
+      {id:uid(), ts:now-9*H,  status:"open", by:"Deepa Iyer",      type:"hire", service:"carry",    emo:"📦", title:"Shift 1BHK household within the city",          desc:"Pack and move a small flat ~6 km. A few fragile items. Need 2 helpers and a tempo.",                   budget:"6500",  state:"Tamil Nadu",     city:"Chennai",       applicants:2},
+      {id:uid(), ts:now-11*H, status:"open", by:"Vikram Rathore",  type:"hire", service:"elec",     emo:"💡", title:"Rewire 2 rooms + install 6 new points",         desc:"Old wiring to be replaced in two bedrooms, add 6 switch/socket points. Material on actuals.",          budget:"9000",  state:"Rajasthan",      city:"Jaipur",        applicants:1},
+      {id:uid(), ts:now-13*H, status:"open", by:"Neha Gupta",      type:"hire", service:"tutor",    emo:"📚", title:"Class 10 maths home tuition (3 days/week)",     desc:"Looking for a patient tutor for CBSE Class 10 maths, evenings, three days a week.",                    budget:"5000",  state:"Madhya Pradesh", city:"Indore",        applicants:0},
+      {id:uid(), ts:now-15*H, status:"open", by:"Sanjay Patil",    type:"hire", service:"carp",     emo:"🪚", title:"Build a wardrobe + repair a door",              desc:"Make a 6ft plywood wardrobe with laminate, and fix a sagging bedroom door. Site visit needed.",        budget:"22000", state:"Maharashtra",    city:"Nagpur",        applicants:4},
+      {id:uid(), ts:now-18*H, status:"open", by:"Meera Joshi",     type:"hire", service:"cctv",     emo:"📹", title:"Install 4-camera CCTV for a shop",              desc:"Supply and fit a 4-camera CCTV with DVR and a month's storage for a retail shop. Quote on visit.",     budget:"28000", state:"Gujarat",        city:"Surat",         applicants:2},
+      {id:uid(), ts:now-21*H, status:"open", by:"Ravi Banerjee",   type:"hire", service:"event",    emo:"🎉", title:"Birthday party setup & coordination",           desc:"Decor, balloons, sound and on-day coordination for a 30-guest home party this weekend.",               budget:"35000", state:"West Bengal",    city:"Kolkata",       applicants:0},
+      {id:uid(), ts:now-26*H, status:"open", by:"SAMEER — PQT Division",       type:"govt", service:"govt", emo:"🏛️", title:"Printer cartridges / consumables",         desc:"HP 88A toner ×6, HP 678 ink ×4, A4 paper ×10 reams. Genuine / OEM only. [3 items]",                   budget:"20060", state:"Maharashtra", city:"Mumbai", org:"SAMEER — PQT Division",    applicants:1},
+      {id:uid(), ts:now-29*H, status:"open", by:"Govt Polytechnic, Nagpur",    type:"govt", service:"govt", emo:"🏛️", title:"Custom fabrication / machine parts (CAD)", desc:"CNC aluminium brackets per CAD, 10 nos (+1 more item). [CAD attached]",                                budget:"24190", state:"Maharashtra", city:"Nagpur", org:"Govt Polytechnic, Nagpur", applicants:3},
+      {id:uid(), ts:now-32*H, status:"open", by:"District Hospital, Pune",     type:"govt", service:"govt", emo:"🏛️", title:"Office furniture — chairs & cabinets",     desc:"15 staff chairs and 4 steel filing cabinets for an administrative office. Delivery + install.",        budget:"23500", state:"Maharashtra", city:"Pune",  org:"District Hospital, Pune",  applicants:0}
+    ];
+    // demo bids on a few browse posts (social proof + something to act on)
+    function B(by,rate,note){ return {id:uid(), by:by, rate:rate, note:note, status:"pending", counter:null, ts:Date.now()}; }
+    if(S.posts[0])  S.posts[0].bids =[B("Ramesh K. (4.8★)",3300,"Materials included."), B("Suresh M. (4.6★)",3600,"Free this weekend.")];
+    if(S.posts[3])  S.posts[3].bids =[B("Painter Bros (4.7★)",17000,"Two coats premium emulsion."), B("Karthik P. (4.5★)",16500,"Includes putty work.")];
+    if(S.posts[9])  S.posts[9].bids =[B("Sanjay Carpentry (4.9★)",21000,"Laminate finish, 2 days.")];
+    if(S.posts[10]) S.posts[10].bids=[B("SecureCam (4.6★)",26500,"HD cameras + 30-day storage."), B("Watchdog Systems (4.8★)",27500,"Free on-site survey.")];
+    // pre-unlock one post so the demo shows what a card looks like AFTER applying
+    if(S.posts[2]) S.unlocked = [S.posts[2].id];
+    save();
+  }
+
+  function $(s){ return document.querySelector(s); }
+  function el(id){ return document.getElementById(id); }
+  function uid(){ return "p"+Date.now().toString(36)+Math.floor(Math.random()*1000); }
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,function(m){return({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"})[m];}); }
+  function timeAgo(ts){
+    var diff=Date.now()-(typeof ts==="number"?ts:new Date(ts).getTime());
+    var m=Math.floor(diff/60000);
+    if(m<1) return "Just now";
+    if(m<60) return m+"m ago";
+    var h=Math.floor(m/60);
+    if(h<24) return h+"h ago";
+    var d=Math.floor(h/24);
+    if(d<30) return d+"d ago";
+    return Math.floor(d/30)+"mo ago";
+  }
+
+  function toast(msg,emo){
+    var w=el("toasts"), t=document.createElement("div");
+    t.className="toast"; t.innerHTML='<span>'+(emo||"👍")+'</span><span></span>';
+    t.querySelector("span:last-child").textContent=msg; w.appendChild(t);
+    setTimeout(function(){t.style.opacity="0";t.style.transform="translateY(10px)";t.style.transition="all .3s";},2400);
+    setTimeout(function(){ if(t.parentNode)t.parentNode.removeChild(t); },2800);
+  }
+
+  /* ===== navigation ===== */
+  window.go = function(name){
+    document.querySelectorAll(".section").forEach(function(s){ s.classList.remove("active"); });
+    var sec=el("sec-"+name); if(sec)sec.classList.add("active");
+    document.querySelectorAll(".mainnav a").forEach(function(a){ a.classList.toggle("on", a.getAttribute("data-sec")===name); });
+    if(name==="home") renderHomeJobs();
+    if(name==="profile") renderProfile();
+    if(name==="govt") prefillGovtFromProfile();
+    if(name==="work") renderWorkBoard();
+    window.scrollTo(0,0);
+    closeDrawer();
+  };
+  function prefillGovtFromProfile(){
+    if(!S.user) return;
+    if(el("gvOrg")    && !el("gvOrg").value    && S.user.org)     el("gvOrg").value=S.user.org;
+    if(el("gvAddr")   && !el("gvAddr").value   && S.user.address) el("gvAddr").value=S.user.address;
+    if(el("gvPerson") && !el("gvPerson").value && S.user.name)    el("gvPerson").value=S.user.name;
+  }
+
+  /* ===== state/city dropdowns ===== */
+  function fillStateSelect(sel){
+    var s=el(sel); if(!s) return;
+    var cur=s.value;
+    var opts='<option value="">'+(sel.indexOf("Sel")>-1?"State":"Select state")+'</option>';
+    Object.keys(INDIA).sort().forEach(function(st){ opts+='<option>'+st+'</option>'; });
+    s.innerHTML=opts; if(cur) s.value=cur;
+  }
+  window.fillCities = function(stateSelId, citySelId){
+    var st=el(stateSelId).value, c=el(citySelId);
+    var list = INDIA[st] ? INDIA[st].slice().sort(function(a,b){return a.localeCompare(b);}) : [];
+    list.push("Other");
+    c.innerHTML='<option value="">'+(citySelId.indexOf("Sel")>-1?"City":"Select city")+'</option>'+list.map(function(x){return '<option>'+x+'</option>';}).join("");
+  };
+  // header
+  window.onStateChange = function(){ S.location.state=el("stateSel").value; S.location.city=""; fillCities("stateSel","citySel"); el("citySelM").value=""; el("stateSelM").value=S.location.state; fillCities("stateSelM","citySelM"); save(); };
+  window.onCityChange = function(){ S.location.city=el("citySel").value; el("citySelM").value=S.location.city; save(); if(S.location.city) toast("Location set: "+S.location.city,"📍"); };
+  window.onStateChangeM = function(){ S.location.state=el("stateSelM").value; S.location.city=""; fillCities("stateSelM","citySelM"); el("stateSel").value=S.location.state; fillCities("stateSel","citySel"); save(); };
+  window.onCityChangeM = function(){ S.location.city=el("citySelM").value; el("citySel").value=S.location.city; save(); };
+
+  function prefillFormLocation(stId,ciId){
+    if(S.location.state){ el(stId).value=S.location.state; fillCities(stId,ciId); if(S.location.city) el(ciId).value=S.location.city; }
+  }
+
+  /* ===== auth ===== */
+  function renderAuth(){
+    var a=el("authArea"), d=el("drawerAuth");
+    if(S.user){
+      var initial=(S.user.name||"U").charAt(0).toUpperCase();
+      var nc = getNotifs().length;
+      var bellHtml = '<button class="btn btn-ghost btn-sm" onclick="openNotifs()" style="position:relative;padding:8px 10px;">🔔'+(nc?'<span style="position:absolute;top:2px;right:2px;background:var(--danger);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;border-radius:50%;display:flex;align-items:center;justify-content:center;">'+nc+'</span>':'')+'</button>';
+      a.innerHTML= bellHtml + '<div class="profile-wrap"><button class="profile-btn" onclick="toggleProfileMenu(event)"><span class="av">'+initial+'</span><span>'+esc(S.user.name.split(" ")[0])+'</span><span>▾</span></button>'+
+        '<div class="profile-menu" id="profileMenu">'+
+          '<div class="pm-head"><div class="nm">'+esc(S.user.name)+'</div><div class="meta">📱 '+esc(S.user.mobile)+'</div></div>'+
+          '<button class="pm-item" onclick="go(\'profile\');closeProfileMenu()">👤 My profile</button>'+
+          '<button class="pm-item" onclick="go(\'hire\');closeProfileMenu()">📤 Post a job</button>'+
+          '<button class="pm-item" onclick="openContactUs();closeProfileMenu()">📧 Contact us</button>'+
+          '<button class="pm-item" onclick="openTerms();closeProfileMenu()">📋 Terms &amp; Conditions</button>'+
+          '<button class="pm-item danger" onclick="logout()">🚪 Log out</button>'+
+        '</div></div>';
+      d.innerHTML='<div style="font-weight:800;font-size:16px;margin-bottom:6px;">'+esc(S.user.name)+'</div><div style="color:var(--muted);font-size:13px;margin-bottom:10px;">📱 '+esc(S.user.mobile)+'</div><button class="btn btn-ghost btn-block btn-sm" onclick="go(\'profile\');closeDrawer()">My profile</button><button class="btn btn-ghost btn-block btn-sm" style="margin-top:8px;color:var(--danger)" onclick="logout()">Log out</button>';
+    } else {
+      a.innerHTML='<button class="btn btn-ghost btn-sm" onclick="openAuth(\'login\')">Log in</button><button class="btn btn-go btn-sm" onclick="openAuth(\'register\')">Register</button>';
+      d.innerHTML='<button class="btn btn-ghost btn-block btn-sm" onclick="openAuth(\'login\');closeDrawer()">Log in</button><button class="btn btn-go btn-block btn-sm" style="margin-top:8px;" onclick="openAuth(\'register\');closeDrawer()">Register</button>';
+    }
+  }
+  window.toggleProfileMenu = function(e){ e.stopPropagation(); var m=el("profileMenu"); if(m) m.classList.toggle("open"); };
+  window.closeProfileMenu = function(){ var m=el("profileMenu"); if(m) m.classList.remove("open"); };
+  document.addEventListener("click", function(){ closeProfileMenu(); });
+
+  window.openAuth = function(mode){
+    setAuthMode(mode);
+    el("authStep1").style.display="block"; el("authStep2").style.display="none";
+    el("authModal").classList.add("show");
+    setTimeout(function(){ el("authMobile").focus(); },150);
+  };
+  window.setAuthMode = function(mode){
+    S.auth.mode=mode;
+    el("tabLogin").classList.toggle("on",mode==="login");
+    el("tabReg").classList.toggle("on",mode==="register");
+    el("authTitle").textContent = mode==="login"?"Log in":"Create account";
+    el("authIcon").textContent = mode==="login"?"🔐":"🆕";
+    el("authSub").textContent = mode==="login"?"Enter your mobile number — we’ll send an OTP. No password to remember.":"Register with your mobile — we’ll send an OTP to verify.";
+    el("regNameRow").style.display = mode==="register"?"block":"none";
+    if(mode==="register") onAcctType();
+  };
+  window.onAcctType = function(){
+    var sel=el("regAcctType"); if(!sel) return;
+    var t=sel.value, gov=t.indexOf("Government")>-1, show=(t!=="Individual");
+    if(el("regOrgWrap")) el("regOrgWrap").style.display = show?"block":"none";
+    if(el("regOrgLabel")) el("regOrgLabel").innerHTML = (gov?"Department name":"Company / organisation")+' <span class="req">*</span>';
+  };
+  window.sendAuthOTP = function(){
+    if(S.auth.mode==="register"){
+      var fn=el("regFirst").value.trim(); if(!fn){ toast("Enter your name","✍️"); return; }
+      var at=el("regAcctType")?el("regAcctType").value:"Individual";
+      if(at!=="Individual" && el("regOrg") && !el("regOrg").value.trim()){ toast(at.indexOf("Government")>-1?"Enter department name":"Enter organisation name","🏢"); return; }
+    }
+    var m=el("authMobile").value.replace(/\D/g,"");
+    if(m.length!==10){ toast("Enter a valid 10-digit number","📱"); return; }
+    S.auth.mobile=m; S.auth.code=String(Math.floor(1000+Math.random()*9000));
+    el("demoCode").textContent=S.auth.code;
+    el("otpSentMsg").textContent="OTP sent to 📱 "+m;
+    document.querySelectorAll("#otpRow .otp-box").forEach(function(b){b.value="";});
+    el("authStep1").style.display="none"; el("authStep2").style.display="block";
+    setTimeout(function(){ var f=$("#otpRow .otp-box"); if(f)f.focus(); },120);
+  };
+  window.otpNext = function(node){ node.value=node.value.replace(/\D/g,""); if(node.value && node.nextElementSibling) node.nextElementSibling.focus(); };
+  window.verifyAuthOTP = function(){
+    var code=Array.prototype.map.call(document.querySelectorAll("#otpRow .otp-box"),function(b){return b.value;}).join("");
+    if(code!==S.auth.code){ toast("Wrong OTP, try again","❌"); return; }
+    var name = S.auth.mode==="register" ? (el("regFirst").value.trim()+" "+el("regLast").value.trim()).trim() : (S.user&&S.user.mobile===S.auth.mobile?S.user.name:"Member");
+    if(S.auth.mode==="register"){
+      var atype = el("regAcctType") ? el("regAcctType").value : "Individual";
+      var aorg  = (atype!=="Individual" && el("regOrg"))  ? el("regOrg").value.trim()  : "";
+      var aaddr = (atype!=="Individual" && el("regAddr")) ? el("regAddr").value.trim() : "";
+      S.user={ mobile:S.auth.mobile, name:name||"Member", type:atype, org:aorg, address:aaddr, joined:Date.now() };
+    } else {
+      var prev = (S.user && S.user.mobile===S.auth.mobile) ? S.user : {};
+      S.user={ mobile:S.auth.mobile, name:name||"Member", type:prev.type||"Individual", org:prev.org||"", address:prev.address||"", joined:prev.joined||Date.now() };
+    }
+    save(); renderAuth();
+    el("authModal").classList.remove("show");
+    toast("Welcome, "+S.user.name.split(" ")[0]+"!","🙏");
+    showTermsIfNeeded();
+    var act=S.auth.pending; S.auth.pending=null; if(typeof act==="function") act();
+  };
+  window.logout = function(){ S.user=null; save(); renderAuth(); closeProfileMenu(); go("home"); toast("Logged out","👋"); };
+
+  function requireLogin(after){
+    if(S.user){ return true; }
+    S.auth.pending=after; openAuth("login");
+    toast("Please log in or register first","🔐");
+    return false;
+  }
+
+  /* ===== services rendering ===== */
+  function svcTile(s, onclick){
+    var other = s.k==="other" ? " other":"";
+    var hint = s.k==="other" ? '<div class="hint">we quote it</div>':'';
+    return '<div class="svc'+other+'" onclick="'+onclick+'(\''+s.k+'\')"><span class="emo">'+s.emo+'</span><div class="nm">'+s.nm+'</div>'+hint+'</div>';
+  }
+  function renderServices(){
+    el("homeSvc").innerHTML = SERVICES.map(function(s){return svcTile(s,"openProforma");}).join("");
+    el("allSvc").innerHTML = SERVICES.map(function(s){return svcTile(s,"openProforma");}).join("");
+    // hire service dropdown
+    el("hireService").innerHTML = SERVICES.map(function(s){return '<option value="'+s.k+'">'+s.emo+'  '+s.nm+'</option>';}).join("");
+    el("hireService").onchange=function(){ el("hireOtherWrap").style.display = this.value==="other"?"block":"none"; };
+    // worker skills chips
+    el("wkSkills").innerHTML = SERVICES.filter(function(s){return s.k!=="other";}).map(function(s){
+      return '<button type="button" class="mchip" data-k="'+s.k+'" onclick="toggleSkill(this)">'+s.emo+' '+s.nm+'</button>';
+    }).join("");
+    // govt category dropdown
+    el("gvCat").innerHTML='<option value="">Select category…</option>'+GOV_CATS.map(function(c){return '<option>'+c+'</option>';}).join("");
+  }
+  window.toggleSkill = function(node){
+    node.classList.toggle("on");
+    var k=node.getAttribute("data-k");
+    var i=S.wkSkills.indexOf(k);
+    if(i>-1) S.wkSkills.splice(i,1); else S.wkSkills.push(k);
+  };
+
+  /* ===== proforma modal ===== */
+  window.openProforma = function(k){
+    var s=svcOf(k);
+    el("pfService").value=k;
+    el("pfEmo").textContent=s.emo;
+    el("pfTitle").textContent=s.nm+" — request";
+    el("pfOtherWrap").style.display = k==="other"?"block":"none";
+    el("pfDesc").value=""; el("pfBudget").value=""; el("pfWhen").value=""; if(el("pfOther"))el("pfOther").value="";
+    fillStateSelect("pfState"); prefillFormLocation("pfState","pfCity");
+    el("proformaModal").classList.add("show");
+  };
+  window.submitProforma = function(){
+    var k=el("pfService").value, s=svcOf(k);
+    var desc=el("pfDesc").value.trim();
+    if(k==="other"){ var o=el("pfOther").value.trim(); if(!o){ toast("Describe the custom work","✍️"); return; } desc=o+(desc?" — "+desc:""); }
+    if(!desc){ toast("Please describe the work","✍️"); return; }
+    var doIt=function(){
+      addPost({type:"hire", service:k, emo:s.emo, title:s.nm, desc:desc, budget:el("pfBudget").value, state:el("pfState").value, city:el("pfCity").value});
+      el("proformaModal").classList.remove("show");
+      toast("Posted free! Workers near you can apply.","✅");
+      renderHomeJobs();
+    };
+    if(!requireLogin(doIt)) { el("proformaModal").classList.remove("show"); return; }
+    doIt();
+  };
+
+  /* ===== hire / work / govt submit ===== */
+  window.submitHire = function(){
+    var k=el("hireService").value, s=svcOf(k);
+    var title=el("hireTitle").value.trim(), desc=el("hireDesc").value.trim();
+    if(k==="other"){ var o=el("hireOther").value.trim(); if(!o){ toast("Describe the custom work","✍️"); return; } desc=o+(desc?" — "+desc:""); }
+    if(!title){ toast("Add a title for the work","✍️"); return; }
+    if(!desc){ toast("Describe the work","✍️"); return; }
+    if(!el("hireState").value || !el("hireCity").value){ toast("Choose your state and city","📍"); return; }
+    var doIt=function(){
+      var postData={type:"hire", service:k, emo:s.emo, title:title, desc:desc, budget:el("hireBudget").value, state:el("hireState").value, city:el("hireCity").value};
+      // Attach file if selected
+      if(window._hireFileData){
+        postData.attachment=window._hireFileData;
+        window._hireFileData=null;
+      }
+      addPost(postData);
+      el("hireSuccessModal").classList.add("show");
+      ["hireTitle","hireDesc","hireBudget","hireAddr"].forEach(function(i){el(i).value="";});
+      el("hireFileName").textContent="";
+      el("hireFile").value="";
+      renderHomeJobs();
+      renderWorkBoard();
+    };
+    if(!requireLogin(doIt)) return; doIt();
+  };
+  window.onHireFileChange = function(input){
+    if(input.files && input.files[0]){
+      var file=input.files[0];
+      if(file.size>5*1024*1024){ toast("File too large (max 5MB)","❌"); input.value=""; return; }
+      var reader=new FileReader();
+      reader.onload=function(e){
+        window._hireFileData={name:file.name, size:file.size, type:file.type, url:e.target.result};
+        el("hireFileName").textContent="📎 "+file.name+" ("+Math.round(file.size/1024)+" KB)";
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+  window.submitWork = function(){
+    var name=el("wkName").value.trim(), mob=el("wkMobile").value.replace(/\D/g,"");
+    if(!name){ toast("Enter your name","✍️"); return; }
+    if(mob.length!==10){ toast("Enter a valid 10-digit mobile","📱"); return; }
+    if(!S.wkSkills.length){ toast("Pick at least one type of work","🧰"); return; }
+    if(!el("wkState").value || !el("wkCity").value){ toast("Choose your state and city","📍"); return; }
+    var doIt=function(){
+      S.worker={ name:name, mobile:mob, skills:S.wkSkills.slice(), exp:el("wkExp").value, pay:el("wkPay").value, state:el("wkState").value, city:el("wkCity").value, avail:el("wkAvail").value, bio:el("wkBio").value.trim() };
+      save();
+      toast("You're registered! We'll match you with work nearby.","💪");
+      renderWorkBoard();
+      go("profile");
+    };
+    if(!requireLogin(doIt)) return; doIt();
+  };
+  window.onGvCat = function(){
+    var v=el("gvCat").value;
+    var isCad = v.indexOf("fabrication")>-1 || v.indexOf("Custom")>-1;
+    el("gvCadWrap").style.display = isCad?"block":"none";
+  };
+  window.onCadPick = function(node){
+    if(node.files && node.files[0]){ el("gvCadName").textContent="📎 "+node.files[0].name+" ("+Math.round(node.files[0].size/1024)+" KB) attached"; }
+  };
+  function fmtMoney(n){ return (window.YWDQuote&&window.YWDQuote.inr)?window.YWDQuote.inr(n):(Number(n)||0).toFixed(2); }
+  function gvItemRow(){
+    var d=document.createElement("div"); d.className="gv-item";
+    d.innerHTML=
+      '<div class="gv-item-top"><span class="gv-item-no"></span><button type="button" class="gv-rm" onclick="gvRemoveItem(this)" title="Remove item">✕</button></div>'+
+      '<div class="fg" style="margin-bottom:8px;"><textarea class="inp gv-desc" rows="2" placeholder="Description &amp; specs — model/make, size, material, finish, standard…"></textarea></div>'+
+      '<div class="gv-row3">'+
+        '<div class="fg"><label class="mini">HSN/SAC</label><input class="inp gv-hsn" placeholder="auto"></div>'+
+        '<div class="fg"><label class="mini">Qty</label><input class="inp gv-qty" type="number" inputmode="numeric" value="1" oninput="gvLimitCheck()"></div>'+
+        '<div class="fg"><label class="mini">Line value (₹)</label><input class="inp gv-val" type="number" inputmode="numeric" placeholder="20000" oninput="gvLimitCheck()"></div>'+
+      '</div>';
+    return d;
+  }
+  window.gvAddItem = function(){ if(!el("gvItems")) return; el("gvItems").appendChild(gvItemRow()); gvRenumber(); };
+  window.gvRemoveItem = function(btn){
+    var rows=el("gvItems").querySelectorAll(".gv-item");
+    if(rows.length<=1){ toast("Keep at least one item","📋"); return; }
+    var row=btn.parentNode && btn.parentNode.parentNode;
+    if(row && row.className==="gv-item") row.parentNode.removeChild(row);
+    gvRenumber(); gvLimitCheck();
+  };
+  function gvRenumber(){ var ns=el("gvItems").querySelectorAll(".gv-item .gv-item-no"); Array.prototype.forEach.call(ns,function(n,i){ n.textContent="Item "+(i+1); }); }
+  function gvGatherItems(){
+    var items=[];
+    Array.prototype.forEach.call(el("gvItems").querySelectorAll(".gv-item"),function(row){
+      var desc=row.querySelector(".gv-desc").value.trim();
+      var hsn=row.querySelector(".gv-hsn").value.trim();
+      var qty=parseInt(row.querySelector(".gv-qty").value,10)||1;
+      var val=parseFloat(row.querySelector(".gv-val").value)||0;
+      if(desc||val) items.push({desc:desc, hsn:hsn, qty:qty, value:val});
+    });
+    return items;
+  }
+  window.onGvState = function(){
+    fillCities("gvState","gvCity");
+    var st=el("gvState").value, tm=el("gvTaxMode");
+    if(tm && st){ tm.value = (st==="Maharashtra") ? "intra" : "inter"; }  // seller is in Maharashtra
+    gvLimitCheck();
+  };
+  window.gvLimitCheck = function(){
+    if(!el("gvItems")) return;
+    var items=gvGatherItems();
+    var sum=items.reduce(function(s,i){ return s+(i.value||0); },0);
+    var m=el("gvLimitMsg"), box=el("gvSummary");
+    if(!sum){ if(m){m.textContent="";} if(box){box.style.display="none";} return; }
+    var gstMode=el("gvGstMode")?el("gvGstMode").value:"inclusive";
+    var taxMode=el("gvTaxMode")?el("gvTaxMode").value:"intra";
+    var taxable=gstMode==="exclusive"?sum:Math.round((sum/1.18)*100)/100;
+    var gst=Math.round(taxable*0.18*100)/100, grand=Math.round((taxable+gst)*100)/100;
+    if(m){
+      if(grand<=25000){ m.style.color="var(--pine)"; m.textContent="✓ Grand total ₹"+fmtMoney(grand)+" — within the ₹25,000 direct-purchase limit (GFR Rule 154)."; }
+      else if(grand<=250000){ m.style.color="var(--marigold-deep)"; m.textContent="↗ ₹"+fmtMoney(grand)+" — above ₹25,000; needs a purchase committee (Rule 155). We can still quote."; }
+      else { m.style.color="var(--danger)"; m.textContent="↗ ₹"+fmtMoney(grand)+" — above ₹2.5L; usually requires tender / GeM bidding."; }
+    }
+    if(box){
+      var taxRows = taxMode==="inter"
+        ? '<div class="row"><span>IGST @ 18%</span><span>₹'+fmtMoney(gst)+'</span></div>'
+        : '<div class="row"><span>CGST @ 9%</span><span>₹'+fmtMoney(gst/2)+'</span></div><div class="row"><span>SGST @ 9%</span><span>₹'+fmtMoney(gst/2)+'</span></div>';
+      box.style.display="block";
+      box.innerHTML='<div class="row"><span>Taxable value ('+items.length+' item'+(items.length>1?'s':'')+(gstMode==="exclusive"?", pre-tax":"")+')</span><span>₹'+fmtMoney(taxable)+'</span></div>'+taxRows+'<div class="row total"><span>Grand total (incl. GST)</span><span>₹'+fmtMoney(grand)+'</span></div>';
+    }
+  };
+  window.submitGovt = function(){
+    var org=el("gvOrg").value.trim(), person=el("gvPerson").value.trim(), email=el("gvEmail").value.trim(), cat=el("gvCat").value;
+    var items=gvGatherItems();
+    if(!org){ toast("Enter department / organisation","🏛️"); return; }
+    if(!person){ toast("Enter contact person","✍️"); return; }
+    if(!email || email.indexOf("@")<0){ toast("Enter a valid official email","✉️"); return; }
+    if(!cat){ toast("Select what you need","📋"); return; }
+    if(!items.length || !items.some(function(i){return i.desc;})){ toast("Add at least one item with a description","✍️"); return; }
+    var doIt=function(){
+      var phone=el("gvPhone").value.trim();
+      var stateC=el("gvState").value, cityC=el("gvCity").value;
+      var loc=[cityC,stateC].filter(Boolean).join(", ");
+      var addr=(el("gvAddr")&&el("gvAddr").value.trim())||(S.user&&S.user.address)||loc;
+      var cadName=el("gvCadName").textContent;
+      var cadRef=cadName?cadName.replace(/^📎\s*/,"").replace(/\s*attached$/,"").replace(/\s*\(.*$/,"").trim():"";
+      if(cadRef && items.length){ items[0].cadRef=cadRef; }
+      var gstMode=el("gvGstMode")?el("gvGstMode").value:"inclusive";
+      var taxMode=el("gvTaxMode")?el("gvTaxMode").value:"intra";
+      var sum=items.reduce(function(s,i){return s+(i.value||0);},0);
+      var taxable=gstMode==="exclusive"?sum:Math.round((sum/1.18)*100)/100;
+      var grand=Math.round((taxable+taxable*0.18)*100)/100;
+      addPost({type:"govt", service:"govt", emo:"🏛️", title:cat, desc:(items[0].desc||cat)+(items.length>1?" (+"+(items.length-1)+" more items)":"")+(cadName?" [CAD attached]":""), budget:String(grand), state:stateC, city:cityC, org:org});
+      renderHomeJobs();
+
+      var pdfOk=makeQuotationPDF({
+        buyer:{ type:(S.user&&S.user.type&&S.user.type.indexOf("Government")>-1?S.user.type:"Government"), org:org, person:person, address:addr, email:email, phone:phone },
+        category:cat, items:items, gstMode:gstMode, taxMode:taxMode
+      });
+      toast(pdfOk?"Quotation PDF generated — check your downloads 📄":"Request received — we’ll email your quotation (PDF needs internet).","🏛️");
+
+      ["gvOrg","gvPerson","gvEmail","gvPhone"].forEach(function(i){el(i).value="";});
+      if(el("gvAddr")) el("gvAddr").value="";
+      el("gvCat").value=""; el("gvCadWrap").style.display="none"; el("gvCadName").textContent=""; el("gvLimitMsg").textContent="";
+      if(el("gvSummary")){ el("gvSummary").style.display="none"; el("gvSummary").innerHTML=""; }
+      if(el("gvItems")){ el("gvItems").innerHTML=""; gvAddItem(); }
+    };
+    if(!requireLogin(doIt)) return; doIt();
+  };
+
+  function makeQuotationPDF(input){
+    try{
+      if(!(window.YWDQuote && window.jspdf && window.jspdf.jsPDF)) return false;
+      var q = window.YWDQuote.buildQuote(input);
+      var doc = new window.jspdf.jsPDF({ unit:"mm", format:"a4" });
+      window.YWDQuote.drawQuotation(doc, q);
+      doc.save("YourWorkDo_Quotation_"+q.quoteNo.replace(/[\/\s]+/g,"-")+".pdf");
+      return true;
+    }catch(e){ if(window.console) console.error("quote pdf:", e); return false; }
+  }
+
+  function addPost(p){ p.id=uid(); p.ts=Date.now(); p.status="open"; p.by=S.user?S.user.name:"You"; p.byMobile=S.user?S.user.mobile:""; p.bids=p.bids||[]; S.posts.unshift(p); save(); }
+
+  /* ===== requirements board (home) + apply-to-unlock ===== */
+  function renderHomeJobs(){
+    var box=el("homeJobs"); if(!box) return;
+    var jobs=S.posts.filter(function(p){ return p.status!=="closed"; });
+    if(!jobs.length){ box.innerHTML='<div class="empty">No requirements posted yet. <a onclick="go(\'hire\')" style="color:var(--pine);font-weight:700;cursor:pointer;">Post one free →</a></div>'; return; }
+    var free=isFreeWindow();
+    box.innerHTML = jobs.map(function(p){
+      var mine = isMyPost(p);
+      var fee = applyFee(p.budget);
+      var free=isFreeWindow();
+      var sc = (typeof svcOf==="function") ? svcOf(p.service) : null;
+      var cat = p.type==="govt" ? "Government supply" : (sc?sc.nm:"Service");
+      var amount = p.budget ? "₹"+esc(p.budget) : "Budget on request";
+      // Home page — always show full details openly
+      var reveal = '<div class="job-reveal">👤 '+esc(p.by)+(p.city?'  ·  📍 '+esc(p.city)+', '+esc(p.state):'')+'</div>';
+      var bs=bidsOf(p), nb=bs.length, lo=lowBid(p);
+      var bidInfo = nb ? '<div class="job-bids">💬 '+nb+' bid'+(nb>1?'s':'')+(lo?' · from ₹'+lo:'')+'</div>' : '';
+      var mb = myBidOn(p);
+      var action;
+      if(mine){ action='<span class="pstat">Your post'+(p.applicants?' · '+p.applicants+' applied':'')+'</span> <button class="btn btn-ghost btn-xs" style="color:var(--danger);" onclick="deleteMyPost(\''+p.id+'\')">🗑</button>'+(p.status==="assigned"?' <button class="btn btn-ghost btn-xs" onclick="openChatFor(\''+p.id+'\')">💬 Chat</button>':''); }
+      else if(p.status==="assigned"){ action='<span class="pstat" style="background:var(--mist);color:var(--muted);">Assigned</span>'; }
+      else if(mb){
+        if(mb.status==="accepted") action='<span class="pstat" style="background:#e6f7ee;color:#137a43;">✓ You won · ₹'+(mb.dealRate||mb.rate)+'</span>';
+        else if(mb.status==="countered") action='<button class="btn btn-go btn-xs" onclick="workerAcceptCounter(\''+p.id+'\',\''+mb.id+'\')">Accept ₹'+mb.counter+'</button> <button class="btn btn-ghost btn-xs" onclick="openBidModal(\''+p.id+'\',\'bid\')">Re-bid</button>';
+        else action='<span class="job-bids">Your bid ₹'+mb.rate+' · pending</span> <button class="btn btn-ghost btn-xs" onclick="openBidModal(\''+p.id+'\',\'bid\')">Revise</button>';
+      }
+      else if(S.user){ action='<button class="btn btn-green btn-sm" onclick="openBidModal(\''+p.id+'\',\'bid\')">Place a bid</button>'; }
+      else { action='<button class="btn btn-green btn-sm" onclick="openAuth(\'login\')">Login to bid</button>'; }
+      return '<div class="job-card">'+
+        '<div class="job-top"><span class="emo">'+p.emo+'</span><span class="job-amt">'+amount+'</span></div>'+
+        '<div class="job-title">'+esc(p.title)+'</div>'+
+        '<div class="job-type">'+(p.type==="govt"?"🏛️ ":"🛠️ ")+esc(cat)+(p.city?' · 📍 '+esc(p.city):'')+'</div>'+
+        '<div class="job-desc">'+esc(p.desc)+'</div>'+
+        (p.attachment?'<div style="margin:4px 0;font-size:12px;"><a href="'+esc(p.attachment.url)+'" target="_blank" style="color:var(--pine);font-weight:700;">📎 '+esc(p.attachment.name)+'</a></div>':'')+
+        bidInfo+
+        reveal+
+        '<div class="job-foot">'+action+'</div>'+
+      '</div>';
+    }).join("");
+  }
+
+  /* ===== work board for registered workers (Find Work page) ===== */
+  function renderWorkBoard(){
+    var box=el("workBoard"); if(!box) return;
+    var formWrap = el("workerFormWrap");
+    var pageTitle = el("workPageTitle");
+    var pageSub = el("workPageSub");
+    var header = el("workPageHeader");
+
+    // Not logged in — show form, prompt login in board
+    if(!S.user){
+      if(formWrap) formWrap.style.display = "block";
+      if(pageTitle) pageTitle.textContent = "Register to get work nearby";
+      if(pageSub) pageSub.textContent = "Tell us what you do and where you work. We match you with jobs posted in your area.";
+      box.innerHTML='<div class="empty">👤 Please <a onclick="openAuth(\'login\')" style="color:var(--pine);font-weight:700;cursor:pointer;">log in</a> first, then register as a worker to see available posts.</div>';
+      return;
+    }
+    // Not registered as worker — show form, show prompt in board
+    if(!S.worker){
+      if(formWrap) formWrap.style.display = "block";
+      if(pageTitle) pageTitle.textContent = "Register to get work nearby";
+      if(pageSub) pageSub.textContent = "Tell us what you do and where you work. We match you with jobs posted in your area.";
+      // Auto-fill mobile and name from logged-in account (read-only mobile)
+      if(S.user && el("wkMobile")) el("wkMobile").value = S.user.mobile||"";
+      if(S.user && el("wkName") && !el("wkName").value) el("wkName").value = S.user.name||"";
+      box.innerHTML='<div class="empty" style="padding:40px;">'+
+        '<div style="font-size:3rem;margin-bottom:12px;">👷</div>'+
+        '<p style="font-weight:700;font-size:1.05rem;margin-bottom:8px;">Register as a worker to see available posts</p>'+
+        '<p style="color:var(--muted);font-size:14px;margin-bottom:16px;">Fill the form above to register. Once registered, work posts in your city will appear here.</p>'+
+        '<button class="btn btn-green" onclick="scrollToWorkerForm()">↑ Fill Registration Form</button>'+
+      '</div>';
+      return;
+    }
+
+    // ✅ Registered worker — HIDE the registration form, show only posts
+    if(formWrap) formWrap.style.display = "none";
+    if(pageTitle) pageTitle.textContent = "📋 Available Work";
+    if(pageSub) pageSub.textContent = "Accept a job or place your bid. Pay ₹99 to view poster contact.";
+
+    // Filter: only OPEN posts
+    var workerCity = (S.worker.city||"").toLowerCase();
+    var searchVal = (el("workSearchInput") ? el("workSearchInput").value : "").toLowerCase().trim();
+    var jobs=S.posts.filter(function(p){
+      if(p.status!=="open") return false;
+      if(p.type!=="hire") return false;
+      if(searchVal && (p.title||"").toLowerCase().indexOf(searchVal)===-1 && (p.desc||"").toLowerCase().indexOf(searchVal)===-1 && (p.city||"").toLowerCase().indexOf(searchVal)===-1) return false;
+      return true;
+    });
+    jobs.sort(function(a,b){
+      var aMatch = (a.city||"").toLowerCase()===workerCity ? 0 : 1;
+      var bMatch = (b.city||"").toLowerCase()===workerCity ? 0 : 1;
+      if(aMatch!==bMatch) return aMatch-bMatch;
+      return (b.ts||0)-(a.ts||0);
+    });
+
+    var searchBox = '<div style="margin-bottom:16px;"><input class="inp" id="workSearchInput" type="text" placeholder="\uD83D\uDD0D Search by title, city, keyword..." oninput="renderWorkBoard()" value="'+esc(searchVal)+'" style="max-width:400px;"></div>';
+
+    if(!jobs.length){
+      box.innerHTML=searchBox+'<div class="empty"><div style="font-size:2.5rem;margin-bottom:10px;">\uD83D\uDCED</div><p style="font-weight:700;">No posts found'+(searchVal?' for "'+esc(searchVal)+'"':'')+'</p></div>';
+      return;
+    }
+    var myCityCount = jobs.filter(function(p){ return (p.city||"").toLowerCase()===workerCity; }).length;
+    var headerText = myCityCount ? '\uD83D\uDCCD '+myCityCount+' in '+esc(S.worker.city)+' \u00B7 '+jobs.length+' total' : jobs.length+' post'+(jobs.length!==1?'s':'')+' available';
+
+    box.innerHTML=searchBox+'<p style="font-size:13.5px;color:var(--pine);font-weight:700;margin-bottom:14px;">'+headerText+'</p>'+
+      jobs.map(function(p){
+        var amount = p.budget ? "\u20B9"+esc(p.budget) : "Budget on request";
+        // Contact: hidden unless paid ₹99
+        var contactPaid = S.unlocked && S.unlocked.indexOf(p.id)>-1;
+        var contactHtml;
+        if(contactPaid){
+          var mobileToShow = p.byMobile || "Mobile not available (old post)";
+          contactHtml = '<div style="margin-top:6px;background:#e6f7ee;border:1px solid #b2dfce;border-radius:8px;padding:7px 10px;font-size:13px;font-weight:700;color:var(--pine-deep);">\uD83D\uDCF1 '+esc(mobileToShow)+'</div>';
+        } else {
+          contactHtml = '<button class="btn btn-ghost btn-sm" style="margin-top:6px;font-size:12px;" onclick="unlockContact(\''+p.id+'\')">\uD83D\uDCF1 View Contact \u2014 \u20B999</button>';
+        }
+        var reveal = '<div class="job-reveal">\uD83D\uDC64 '+esc(p.by)+' \u00B7 \uD83D\uDCCD '+esc(p.city)+', '+esc(p.state)+contactHtml+'</div>';
+        var bs=bidsOf(p), nb=bs.length, lo=lowBid(p);
+        var bidInfo = nb ? '<div class="job-bids">\uD83D\uDCAC '+nb+' bid'+(nb>1?'s':'')+(lo?' \u00B7 from \u20B9'+lo:'')+'</div>' : '';
+        var mb = myBidOn(p);
+        var action;
+        if(isMyPost(p)){ action='<span class="pstat">Your post</span>'; }
+        else if(mb){
+          if(mb.status==="accepted") action='<span class="pstat" style="background:#e6f7ee;color:#137a43;">\u2713 Accepted</span> <button class="btn btn-ghost btn-sm" onclick="openChatFor(\''+p.id+'\')">\uD83D\uDCAC Chat</button>';
+          else action='<span class="job-bids">Your bid \u20B9'+mb.rate+' \u00B7 pending</span>';
+        }
+        else {
+          action='<button class="btn btn-green btn-sm" onclick="workerAcceptJob(\''+p.id+'\')">\u2705 Accept</button> '+
+                 '<button class="btn btn-go btn-sm" onclick="openBidModal(\''+p.id+'\',\'bid\')">\uD83D\uDCAC Bid</button>';
+        }
+        return '<div class="job-card">'+
+          '<div class="job-top"><span class="emo">'+p.emo+'</span><span class="job-amt">'+amount+'</span></div>'+
+          '<div class="job-title">'+esc(p.title)+'</div>'+
+          '<div class="job-desc">'+esc(p.desc)+'</div>'+
+          bidInfo+reveal+
+          '<div class="job-foot">'+action+'</div>'+
+        '</div>';
+      }).join("");
+    setTimeout(function(){ var inp=el("workSearchInput"); if(inp && searchVal){ inp.focus(); inp.setSelectionRange(searchVal.length,searchVal.length); } },10);
+  }
+  window.scrollToWorkerForm = function(){
+    var form=el("workerFormWrap");
+    if(form){ form.style.display="block"; form.scrollIntoView({behavior:"smooth",block:"start"}); }
+  };
+
+  window.editWorkerProfile = function(){
+    go("work");
+    // Show the form even though worker is registered
+    var form=el("workerFormWrap");
+    if(form) form.style.display="block";
+    // Always set mobile from account (read-only, cannot change)
+    if(S.user && el("wkMobile")) el("wkMobile").value = S.user.mobile;
+    // Pre-fill with existing data
+    if(S.worker){
+      if(el("wkName")) el("wkName").value = S.worker.name||"";
+      if(el("wkExp")) el("wkExp").value = S.worker.exp||"";
+      if(el("wkPay")) el("wkPay").value = S.worker.pay||"";
+      if(el("wkAvail")) el("wkAvail").value = S.worker.avail||"";
+      if(el("wkBio")) el("wkBio").value = S.worker.bio||"";
+      // Pre-fill state and city
+      if(S.worker.state && el("wkState")){
+        el("wkState").value = S.worker.state;
+        fillCities("wkState","wkCity");
+        setTimeout(function(){ if(S.worker.city && el("wkCity")) el("wkCity").value = S.worker.city; }, 50);
+      }
+      // Pre-select skills
+      if(S.worker.skills){
+        S.wkSkills = S.worker.skills.slice();
+        document.querySelectorAll("#wkSkills .mchip").forEach(function(chip){
+          var k = chip.getAttribute("data-k");
+          chip.classList.toggle("on", S.wkSkills.indexOf(k) > -1);
+        });
+      }
+    }
+    // Scroll to form
+    setTimeout(function(){
+      if(form) form.scrollIntoView({behavior:"smooth",block:"start"});
+    }, 100);
+  };
+
+  /* ===== NOTIFICATION SYSTEM ===== */
+  if(!S.notifs) S.notifs=[];
+  function getNotifs(){ return S.notifs||[]; }
+  function addNotif(msg, postId){
+    S.notifs = S.notifs||[];
+    S.notifs.unshift({id:uid(), msg:msg, postId:postId||null, ts:Date.now(), read:false});
+    save(); renderAuth();
+  }
+  window.openNotifs = function(){
+    var list=el("notifList"); if(!list) return;
+    var ns=getNotifs();
+    if(!ns.length){ list.innerHTML='<div class="empty" style="padding:20px;">No notifications yet.</div>'; }
+    else {
+      list.innerHTML=ns.map(function(n){
+        return '<div style="padding:12px 14px;border-bottom:1px solid var(--mist);font-size:14px;'+(n.read?'':'background:#eff6ff;border-left:3px solid var(--pine);')+'">'+
+          '<div style="font-weight:600;">'+esc(n.msg)+'</div>'+
+          '<div style="font-size:12px;color:var(--muted);margin-top:4px;">'+timeAgo(n.ts)+'</div>'+
+          (n.postId?'<button class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="closeModal(\'notifModal\');viewPostChat(\''+n.postId+'\')">View</button>':'')+
+        '</div>';
+      }).join("");
+      ns.forEach(function(n){ n.read=true; }); save();
+    }
+    el("notifModal").classList.add("show");
+  };
+  window.clearNotifs = function(){ S.notifs=[]; save(); renderAuth(); };
+  window.viewPostChat = function(postId){
+    var p=findPost(postId); if(!p) return;
+    openChatFor(postId);
+  };
+
+  /* ===== CHAT SYSTEM ===== */
+  if(!S.chats) S.chats={};
+  function getChatMessages(postId){ return (S.chats||{})[postId]||[]; }
+  function addChatMsg(postId, fromName, text){
+    S.chats=S.chats||{};
+    if(!S.chats[postId]) S.chats[postId]=[];
+    S.chats[postId].push({from:fromName, text:text, ts:Date.now()});
+    save();
+  }
+  window.openChatFor = function(postId){
+    var p=findPost(postId); if(!p) return;
+    var otherName = (S.user && isMyPost(p)) ? "Worker" : esc(p.by);
+    el("chatHeaderInfo").innerHTML='<strong>'+p.emo+' '+esc(p.title)+'</strong><br><span style="color:var(--muted);">Chatting about this job with <strong>'+otherName+'</strong></span>';
+    window._chatPostId=postId;
+    renderChatMessages(postId);
+    el("chatModal").classList.add("show");
+  };
+  function renderChatMessages(postId){
+    var msgs=getChatMessages(postId);
+    var box=el("chatMessages");
+    if(!msgs.length){ box.innerHTML='<div style="text-align:center;color:var(--muted);padding:40px;font-size:14px;">No messages yet. Say hello! 👋</div>'; return; }
+    box.innerHTML=msgs.map(function(m){
+      var mine = S.user && m.from===S.user.name;
+      return '<div style="max-width:78%;padding:8px 12px;border-radius:14px;font-size:14px;line-height:1.4;word-break:break-word;'+
+        (mine?'align-self:flex-end;background:var(--pine);color:#fff;border-bottom-right-radius:4px;':'align-self:flex-start;background:#fff;border:1px solid var(--line);color:var(--ink);border-bottom-left-radius:4px;')+'">'+
+        '<div style="font-size:11px;opacity:0.7;font-weight:600;margin-bottom:2px;">'+esc(m.from)+'</div>'+
+        esc(m.text)+
+        '<div style="font-size:10px;opacity:0.6;margin-top:3px;text-align:right;">'+timeAgo(m.ts)+'</div>'+
+      '</div>';
+    }).join("");
+    box.scrollTop=box.scrollHeight;
+  }
+  window.sendChat = function(){
+    var input=el("chatInput"); var text=input.value.trim();
+    if(!text || !window._chatPostId || !S.user) return;
+    addChatMsg(window._chatPostId, S.user.name, text);
+    input.value="";
+    renderChatMessages(window._chatPostId);
+  };
+
+  /* ===== UNLOCK CONTACT (₹99 payment) ===== */
+  window.unlockContact = function(postId){
+    if(!S.user){ openAuth("login"); return; }
+    var p=findPost(postId); if(!p) return;
+    if(isMyPost(p)){ toast("This is your own post","🙂"); return; }
+    if(S.unlocked && S.unlocked.indexOf(postId)>-1){ renderWorkBoard(); return; }
+    openPay(99, function(){
+      if(!S.unlocked) S.unlocked=[];
+      if(S.unlocked.indexOf(postId)<0) S.unlocked.push(postId);
+      save();
+      renderWorkBoard();
+      toast("Contact unlocked! Mobile number is now visible.","📱");
+    }, "Unlock poster contact for this job");
+  };
+
+  /* ===== WORKER ACCEPT JOB ===== */
+  window.workerAcceptJob = function(postId){
+    if(!S.user){ openAuth("login"); return; }
+    if(!S.worker){ el("workerRegisterModal").classList.add("show"); return; }
+    var p=findPost(postId); if(!p) return;
+    // Mark as accepted by this worker
+    p.status="assigned";
+    p.assignedTo=S.user.name;
+    // Add a bid record if not exists
+    var mb=myBidOn(p);
+    if(!mb){
+      bidsOf(p).push({id:uid(), by:S.user.name, rate:parseInt(p.budget,10)||0, note:"Accepted the job", status:"accepted", counter:null, ts:Date.now()});
+    } else { mb.status="accepted"; mb.dealRate=mb.rate; }
+    // Decline other bids
+    bidsOf(p).forEach(function(b){ if(b.by!==S.user.name && b.status!=="accepted") b.status="declined"; });
+    save();
+    // Send notification to post owner
+    addNotif("\u2705 "+S.user.name+" accepted your job: \""+p.title+"\"", p.id);
+    // Add first chat message
+    addChatMsg(postId, S.user.name, "Hi! I've accepted this job. Let's discuss the details.");
+    // Re-render
+    renderHomeJobs(); renderWorkBoard();
+    if(el("sec-profile")&&el("sec-profile").classList.contains("active")) renderProfile();
+    toast("Job accepted! You can now chat with the poster.","✅");
+    // Open chat
+    openChatFor(postId);
+  };
+
+  /* ===== DELETE POST ===== */
+  window.deleteMyPost = function(postId){
+    var p=findPost(postId); if(!p) return;
+    if(!S.user || p.by!==S.user.name){ toast("You can only delete your own posts","❌"); return; }
+    if(!confirm("Delete this post?\n\""+p.title+"\"\n\nThis cannot be undone.")) return;
+    p.status="closed";
+    save();
+    renderHomeJobs(); renderWorkBoard();
+    if(el("sec-profile")&&el("sec-profile").classList.contains("active")) renderProfile();
+    toast("Post deleted.","🗑");
+  };
+
+  /* ===== DELETE WORKER PROFILE ===== */
+  window.deleteWorkerProfile = function(){
+    if(!S.worker){ toast("No worker profile to delete","❌"); return; }
+    if(!confirm("Delete your worker profile?\n\nYou will no longer appear as a worker and won't see job posts on the Find Work page.\n\nYou can re-register anytime.")) return;
+    S.worker=null;
+    save();
+    renderWorkBoard();
+    if(el("sec-profile")&&el("sec-profile").classList.contains("active")) renderProfile();
+    toast("Worker profile deleted.","🗑");
+  };
+
+  /* ===== VIEW WORKER PROFILE ===== */
+  window.viewWorkerProfile = function(workerName){
+    var html='<div style="text-align:center;padding:20px;">'+
+      '<div style="width:64px;height:64px;border-radius:50%;background:var(--pine);color:#fff;display:flex;align-items:center;justify-content:center;font-family:Bricolage Grotesque;font-weight:800;font-size:26px;margin:0 auto 12px;">'+
+        (workerName||"W").charAt(0).toUpperCase()+'</div>'+
+      '<h3 style="font-size:18px;font-weight:800;">'+esc(workerName)+'</h3>'+
+      '<p style="color:var(--muted);font-size:13px;margin-top:4px;">Worker on YourWorkDo</p>';
+    // If it's the current user's worker profile show details
+    if(S.worker && S.user && workerName===S.user.name){
+      html+='<div style="text-align:left;margin-top:16px;background:#fff;border:1.5px solid var(--line);border-radius:12px;padding:14px;">'+
+        '<div style="font-weight:700;margin-bottom:6px;">🧰 Skills</div>'+
+        '<p style="font-size:14px;color:var(--muted);">'+S.worker.skills.map(function(k){return svcOf(k).emo+" "+svcOf(k).nm;}).join(", ")+'</p>'+
+        '<div style="font-weight:700;margin:10px 0 6px;">📋 Details</div>'+
+        '<p style="font-size:14px;color:var(--muted);">'+esc(S.worker.exp)+' experience \u00B7 \u20B9'+esc(S.worker.pay||"\u2014")+'/day \u00B7 '+esc(S.worker.avail)+'</p>'+
+        '<p style="font-size:14px;color:var(--muted);">\uD83D\uDCCD '+esc(S.worker.city)+', '+esc(S.worker.state)+'</p>'+
+        (S.worker.bio?'<div style="font-weight:700;margin:10px 0 6px;">About</div><p style="font-size:14px;color:var(--muted);">'+esc(S.worker.bio)+'</p>':'')+
+      '</div>';
+    }
+    html+='<button class="btn btn-ghost btn-block" onclick="closeModal(\'profileViewModal\')" style="margin-top:14px;">Close</button></div>';
+    el("profileViewBody").innerHTML=html;
+    el("profileViewModal").classList.add("show");
+  };
+
+  window.applyJob = function(id){
+    if(!S.user){ openAuth("login"); return; }
+    var p=findPost(id); if(!p) return;
+    if(isMyPost(p)){ toast("This is your own requirement","🙂"); return; }
+    if(isUnlocked(id)){ toast("Already unlocked","✓"); renderHomeJobs(); return; }
+    var fee=applyFee(p.budget);
+    if(isFreeWindow()){ applyConfirm(id, 0); }
+    else { openPay(fee, function(){ applyConfirm(id, fee); }, "Service fee to apply for this work"); }
+  };
+  function applyConfirm(id, fee){
+    if(S.unlocked.indexOf(id)<0) S.unlocked.push(id);
+    var p=findPost(id); if(p){ p.applicants=(p.applicants||0)+1; }
+    save(); renderHomeJobs();
+    if(el("sec-profile") && el("sec-profile").classList.contains("active")) renderProfile();
+    toast(fee ? "Unlocked! Now place your bid." : "First 6 months free — unlocked! Now place your bid.","🔓");
+    openBidModal(id, "bid");
+  }
+
+  /* ===== bidding / bargaining (customer ⇄ worker) ===== */
+  var bidCtx={postId:null, mode:"bid", bidId:null};
+  function bidsOf(p){ if(!p.bids) p.bids=[]; return p.bids; }
+  function myBidOn(p){ if(!S.user) return null; var b=bidsOf(p); for(var i=0;i<b.length;i++){ if(b[i].by===S.user.name) return b[i]; } return null; }
+  function lowBid(p){ var b=bidsOf(p).filter(function(x){return x.status!=="declined";}); if(!b.length) return null; return Math.min.apply(null, b.map(function(x){ return (x.status==="countered"&&x.counter)?x.counter:x.rate; })); }
+  function addBid(postId, rate, note){
+    var p=findPost(postId); if(!p) return;
+    var mine=myBidOn(p);
+    if(mine){ mine.rate=rate; mine.note=note; mine.status="pending"; mine.counter=null; mine.ts=Date.now(); }
+    else { bidsOf(p).push({id:uid(), by:S.user.name, rate:rate, note:note, status:"pending", counter:null, ts:Date.now()}); }
+    save();
+  }
+  function counterBid(postId, bidId, rate, note){
+    var p=findPost(postId); if(!p) return;
+    bidsOf(p).forEach(function(b){ if(b.id===bidId){ b.status="countered"; b.counter=rate; b.counterNote=note; b.ts=Date.now(); } });
+    save();
+  }
+  window.acceptBid = function(postId, bidId){
+    var p=findPost(postId); if(!p) return;
+    var acceptedWorker=null;
+    bidsOf(p).forEach(function(b){
+      if(b.id===bidId){ b.status="accepted"; b.dealRate=b.rate; acceptedWorker=b.by; }
+      else if(b.status!=="accepted"){ b.status="declined"; }
+    });
+    p.status="assigned";
+    p.assignedTo=acceptedWorker;
+    save(); renderHomeJobs(); renderWorkBoard();
+    if(el("sec-profile")&&el("sec-profile").classList.contains("active")) renderProfile();
+    // Notify the worker
+    if(acceptedWorker) addNotif("\u2705 Your bid was accepted on \""+p.title+"\" — chat with the poster!", p.id);
+    toast("Bid accepted — work assigned 🤝","✅");
+  };
+  window.workerAcceptCounter = function(postId, bidId){
+    var p=findPost(postId); if(!p) return;
+    var acceptedWorker=null;
+    bidsOf(p).forEach(function(b){
+      if(b.id===bidId){ b.status="accepted"; b.dealRate=b.counter||b.rate; acceptedWorker=b.by; }
+      else if(b.status!=="accepted"){ b.status="declined"; }
+    });
+    p.status="assigned";
+    p.assignedTo=acceptedWorker;
+    save(); renderHomeJobs(); renderWorkBoard();
+    if(el("sec-profile")&&el("sec-profile").classList.contains("active")) renderProfile();
+    toast("Counter accepted — deal done 🤝","✅");
+  };
+  window.rejectBid = function(postId, bidId){
+    var p=findPost(postId); if(!p) return;
+    bidsOf(p).forEach(function(b){ if(b.id===bidId){ b.status="declined"; } });
+    save(); renderHomeJobs(); renderWorkBoard();
+    if(el("sec-profile")&&el("sec-profile").classList.contains("active")) renderProfile();
+    toast("Bid rejected.","❌");
+  };
+  window.openBidModal = function(postId, mode, bidId){
+    var p=findPost(postId); if(!p) return;
+    bidCtx={postId:postId, mode:mode||"bid", bidId:bidId||null};
+    var counterTo = (mode==="counter") ? bidsOf(p).filter(function(x){return x.id===bidId;})[0] : null;
+    var mb=myBidOn(p);
+    el("bidTitle").textContent = mode==="counter" ? "Counter this bid" : (mb?"Revise your bid":"Place your bid");
+    el("bidEmo").textContent = mode==="counter" ? "↔️" : "💬";
+    el("bidRateLabel").innerHTML = (mode==="counter"?"Your counter rate (₹)":"Your rate (₹)")+' <span class="req">*</span>';
+    el("bidSub").textContent = mode==="counter"
+      ? (counterTo ? (counterTo.by+" offered ₹"+counterTo.rate+"  ·  your budget ₹"+(p.budget||"—")) : "Propose a counter rate.")
+      : ("Customer’s budget: ₹"+(p.budget||"—")+"  ·  "+p.title);
+    el("bidSubmit").textContent = mode==="counter" ? "Send counter" : "Place bid";
+    el("bidRate").value = mode==="counter" ? (p.budget||"") : (mb?mb.rate:(p.budget||""));
+    el("bidNote").value = "";
+    el("bidModal").classList.add("show");
+  };
+  window.submitBid = function(){
+    var rate=parseInt(el("bidRate").value,10)||0;
+    if(rate<=0){ toast("Enter a valid amount","💬"); return; }
+    var note=el("bidNote").value.trim();
+    var pid=bidCtx.postId;
+    if(bidCtx.mode==="counter"){
+      counterBid(pid, bidCtx.bidId, rate, note); toast("Counter sent ↔️","✅");
+      var cb=bidsOf(findPost(pid)).filter(function(x){return x.id===bidCtx.bidId;})[0];
+      if(cb && cb.by!==S.user.name) simWorkerAcceptCounter(pid, cb.id);   // the worker responds
+    } else {
+      addBid(pid, rate, note); toast("Bid placed 💬","✅");
+      var p=findPost(pid), mb=myBidOn(p);
+      if(p && p.by!==S.user.name){
+        addNotif("💬 "+S.user.name+" bid \u20B9"+rate+" on your job: \""+p.title+"\"", p.id);
+        if(mb) simCounterToMyBid(pid, mb.id);     // the customer responds
+      }
+    }
+    el("bidModal").classList.remove("show");
+    renderHomeJobs(); renderWorkBoard();
+    if(el("sec-profile")&&el("sec-profile").classList.contains("active")) renderProfile();
+  };
+  // demo: the customer counters the user's bid (meet in the middle)
+  function simCounterToMyBid(postId, bidId){
+    setTimeout(function(){
+      var p=findPost(postId); if(!p) return;
+      var b=bidsOf(p).filter(function(x){return x.id===bidId;})[0];
+      if(!b || b.status!=="pending") return;
+      var budget=parseInt(p.budget,10)||b.rate;
+      var counter=Math.round((b.rate+budget)/2);
+      if(counter===b.rate) counter=Math.round(b.rate*1.05);
+      b.status="countered"; b.counter=counter; b.ts=Date.now(); save();
+      renderHomeJobs(); if(el("sec-profile")&&el("sec-profile").classList.contains("active")) renderProfile();
+      toast("The customer countered your bid: ₹"+counter+" ↔️","🔔");
+    }, 1600);
+  }
+  // demo: the worker accepts the customer's counter (deal closes)
+  function simWorkerAcceptCounter(postId, bidId){
+    setTimeout(function(){
+      var p=findPost(postId); if(!p) return;
+      var b=bidsOf(p).filter(function(x){return x.id===bidId;})[0];
+      if(!b || b.status!=="countered") return;
+      b.status="accepted"; b.dealRate=b.counter; p.status="assigned"; p.assignedTo=b.by;
+      bidsOf(p).forEach(function(x){ if(x.id!==bidId && x.status!=="accepted") x.status="declined"; });
+      save(); renderHomeJobs(); renderWorkBoard(); if(el("sec-profile")&&el("sec-profile").classList.contains("active")) renderProfile();
+      toast(b.by+" accepted your counter — deal at ₹"+b.dealRate+" 🤝","✅");
+    }, 1600);
+  }
+
+  /* ===== payment (razorpay-style demo) ===== */
+  window.openPay = function(amount, after, label){
+    S.pay={amount:amount, app:null, after:after||null};
+    restorePayBody();
+    el("payAmt").textContent="₹"+amount;
+    el("payBtnAmt").textContent="₹"+amount;
+    if(el("payLabel")) el("payLabel").textContent = label||"";
+    el("payModal").classList.add("show");
+  };
+  window.pickUpi = function(app,node){ S.pay.app=app; document.querySelectorAll(".upi-app").forEach(function(a){a.classList.remove("on");}); node.classList.add("on"); };
+  window.doPay = function(){
+    var vpa=el("upiId").value.trim();
+    if(!S.pay.app && !(vpa.indexOf("@")>0)){ toast("Pick a UPI app or enter a UPI ID","📲"); return; }
+    var btn=el("payBtn");
+    btn.innerHTML='<span class="spin"></span> Processing…'; btn.style.pointerEvents="none";
+    setTimeout(function(){
+      var txn="TXN"+Date.now().toString().slice(-10);
+      el("payBody").innerHTML =
+        '<div class="rzp-success"><div class="tick">✓</div>'+
+        '<h2 style="justify-content:center;">Payment successful</h2>'+
+        '<p style="color:var(--muted);margin-top:6px;">₹'+S.pay.amount+' paid via UPI (demo)</p>'+
+        '<div class="txn">Transaction ID: '+txn+'</div>'+
+        '<button class="btn btn-go btn-block" style="margin-top:18px;" onclick="finishPay()">Done</button></div>';
+    }, 1400);
+  };
+  window.finishPay = function(){
+    el("payModal").classList.remove("show");
+    // restore the pay body for next time
+    setTimeout(restorePayBody, 200);
+    toast("Payment done (demo). You're all set!","🎉");
+    var af=S.pay.after; if(typeof af==="function") af();
+  };
+  function restorePayBody(){
+    el("payBody").innerHTML =
+      '<div class="rzp-demo">⚠️ Demo checkout — no real money is charged. A live version connects Razorpay with backend keys.</div>'+
+      '<div class="rzp-sec">Pay using UPI</div>'+
+      '<div class="upi-apps" id="upiApps">'+
+        '<div class="upi-app" onclick="pickUpi(\'gpay\',this)"><span class="emo">🟢</span><span class="un">GPay</span></div>'+
+        '<div class="upi-app" onclick="pickUpi(\'phonepe\',this)"><span class="emo">🟣</span><span class="un">PhonePe</span></div>'+
+        '<div class="upi-app" onclick="pickUpi(\'paytm\',this)"><span class="emo">🔵</span><span class="un">Paytm</span></div>'+
+        '<div class="upi-app" onclick="pickUpi(\'bhim\',this)"><span class="emo">🟠</span><span class="un">BHIM</span></div>'+
+      '</div>'+
+      '<div class="rzp-or">— or enter UPI ID —</div>'+
+      '<div class="fg"><input class="inp" id="upiId" placeholder="yourname@bank" style="text-align:center;"></div>'+
+      '<button class="btn btn-green btn-block" id="payBtn" onclick="doPay()">Pay <span id="payBtnAmt"></span></button>'+
+      '<p style="font-size:11.5px;color:var(--muted);text-align:center;margin-top:10px;">Your UPI PIN is never entered here — you approve the request in your own UPI app.</p>';
+  }
+
+  /* ===== terms ===== */
+  window.openTerms = function(){ el("termsModal").classList.add("show"); };
+  window.closeModal = function(id){ el(id).classList.remove("show"); if(id==="payModal") setTimeout(restorePayBody,200); };
+
+  /* ===== terms acceptance ===== */
+  window.acceptTerms = function(){
+    var cb=el("termsCheck");
+    if(!cb || !cb.checked){ toast("Please check the box to accept the terms","📋"); return; }
+    if(S.user){ S.user.termsAccepted=true; save(); }
+    el("termsAcceptModal").classList.remove("show");
+    toast("Welcome to YourWorkDo!","🎉");
+  };
+  function showTermsIfNeeded(){
+    if(S.user && !S.user.termsAccepted){
+      el("termsAcceptModal").classList.add("show");
+    }
+  }
+
+  /* ===== contact us ===== */
+  window.openContactUs = function(){
+    if(!S.user){ openAuth("login"); return; }
+    if(el("contactName")) el("contactName").value = S.user.name||"";
+    if(el("contactMobile")) el("contactMobile").value = S.user.mobile||"";
+    if(el("contactSubject")) el("contactSubject").value = "";
+    if(el("contactMsg")) el("contactMsg").value = "";
+    el("contactModal").classList.add("show");
+  };
+  window.sendContactMsg = function(){
+    var subject=el("contactSubject").value.trim();
+    var msg=el("contactMsg").value.trim();
+    if(!subject){ toast("Enter a subject","✍️"); return; }
+    if(!msg){ toast("Enter your message","✍️"); return; }
+    var mailBody = "Name: "+S.user.name+"\nMobile: "+S.user.mobile+"\n\n"+msg;
+    var mailUrl = "mailto:mohitmiglani2711@gmail.com?subject="+encodeURIComponent("[YourWorkDo] "+subject)+"&body="+encodeURIComponent(mailBody);
+    window.open(mailUrl,"_blank");
+    toast("Opening your email app...","📧");
+    closeModal("contactModal");
+  };
+
+  /* ===== profile ===== */
+  function renderProfile(){
+    var box=el("profileBody");
+    if(!S.user){
+      box.innerHTML='<div class="empty">You’re not logged in.<br><br><button class="btn btn-go" onclick="openAuth(\'login\')">Log in / Register</button></div>';
+      return;
+    }
+    var initial=(S.user.name||"U").charAt(0).toUpperCase();
+    var myPosts=S.posts.filter(function(p){return isMyPost(p);});
+    var workerHtml="";
+    if(S.worker){
+      var sk=S.worker.skills.map(function(k){return svcOf(k).emo+" "+svcOf(k).nm;}).join(", ");
+      workerHtml='<div class="sub-h">🧰 My worker profile</div><div class="post-item" style="flex-wrap:wrap;"><span class="emo">💪</span><div style="flex:1;"><div class="pt">'+esc(sk)+'</div><div class="pm">'+esc(S.worker.exp)+' · ₹'+esc(S.worker.pay||"—")+' · '+esc(S.worker.avail)+' · 📍 '+esc(S.worker.city)+', '+esc(S.worker.state)+'</div></div><span class="pstat">active</span><div style="width:100%;margin-top:10px;display:flex;gap:8px;"><button class="btn btn-ghost btn-sm" onclick="editWorkerProfile()">✏️ Edit</button><button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="deleteWorkerProfile()">🗑 Delete worker profile</button></div></div>';
+    }
+    var postsHtml = myPosts.length ? myPosts.map(function(p){
+      var bs=bidsOf(p);
+      var pstat = p.status==="assigned" ? "assigned" : (p.type==="govt"?"quote":"open");
+      var bidsHtml;
+      if(p.type==="govt"){ bidsHtml=""; }
+      else if(!bs.length){ bidsHtml='<div class="bidempty">No bids yet — workers can bid after they apply.</div>'; }
+      else {
+        bidsHtml='<div class="bidlist">'+bs.map(function(b){
+          var chip = b.status==="accepted" ? '<span class="bchip win">✓ Deal ₹'+(b.dealRate||b.rate)+'</span>'
+            : b.status==="declined" ? '<span class="bchip dec">declined</span>'
+            : b.status==="countered" ? '<span class="bchip ctr">you countered ₹'+b.counter+'</span>'
+            : '<span class="bchip">bid ₹'+b.rate+'</span>';
+          var acts = ((b.status==="pending"||b.status==="countered") && p.status!=="assigned")
+            ? ' <button class="btn btn-go btn-xs" onclick="acceptBid(\''+p.id+'\',\''+b.id+'\')">Accept</button> <button class="btn btn-ghost btn-xs" onclick="openBidModal(\''+p.id+'\',\'counter\',\''+b.id+'\')">Counter</button> <button class="btn btn-ghost btn-xs" style="color:var(--danger)" onclick="rejectBid(\''+p.id+'\',\''+b.id+'\')">Reject</button>'
+            : '';
+          return '<div class="bidrow"><div class="bidwho">👷 <a onclick="viewWorkerProfile(\''+esc(b.by).replace(/'/g,"\\'")+'\')" style="color:var(--pine);font-weight:700;cursor:pointer;">'+esc(b.by)+'</a>'+(b.note?' · <span class="bidnote">'+esc(b.note)+'</span>':'')+'</div><div class="bidact">'+chip+acts+'</div></div>';
+        }).join("")+'</div>';
+      }
+      return '<div class="post-item col"><div class="post-row"><span class="emo">'+p.emo+'</span><div style="flex:1;"><div class="pt">'+esc(p.title)+'</div><div class="pm">'+esc(p.desc).slice(0,80)+(p.budget?' · budget ₹'+esc(p.budget):'')+(p.city?' · 📍 '+esc(p.city):'')+'</div></div><span class="pstat">'+pstat+'</span></div>'+bidsHtml+
+        '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">'+
+          (p.status==="assigned"?'<button class="btn btn-ghost btn-xs" onclick="openChatFor(\''+p.id+'\')">💬 Chat</button>':'')+
+          (p.status!=="assigned"?'<button class="btn btn-ghost btn-xs" style="color:var(--danger)" onclick="deleteMyPost(\''+p.id+'\')">🗑 Delete</button>':'')+
+          (p.attachment?'<a class="btn btn-ghost btn-xs" href="'+esc(p.attachment.url)+'" target="_blank">📎 '+esc(p.attachment.name)+'</a>':'')+
+        '</div></div>';
+    }).join("") : '<div class="empty">No requests yet. <a onclick="go(\'hire\')" style="color:var(--pine);font-weight:700;cursor:pointer;">Post your first job →</a></div>';
+
+    var typeBadge = (S.user.type && S.user.type!=="Individual")
+      ? '<div class="meta" style="margin-top:2px;">🏢 '+esc(S.user.type)+(S.user.org?' · '+esc(S.user.org):'')+'</div>' : '';
+
+    // ----- Find work -----
+    var appliedPosts = S.posts.filter(function(p){
+      if(isMyPost(p)) return false;
+      var mb=myBidOn(p);
+      return mb || (p.assignedTo && p.assignedTo===S.user.name);
+    });
+    var appliedHtml = appliedPosts.length ? '<div class="post-list">'+appliedPosts.map(function(p){
+      var mb=myBidOn(p), right;
+      if(p.assignedTo===S.user.name || (mb && mb.status==="accepted")){
+        right='<span class="pstat" style="background:#e6f7ee;color:#137a43;">\u2713 Accepted</span> <button class="btn btn-ghost btn-xs" onclick="openChatFor(\''+p.id+'\')">\uD83D\uDCAC Chat</button>';
+      }
+      else if(mb && mb.status==="countered") right='<button class="btn btn-go btn-xs" onclick="workerAcceptCounter(\''+p.id+'\',\''+mb.id+'\')">Accept \u20B9'+mb.counter+'</button>';
+      else if(mb && mb.status==="declined") right='<span class="pstat" style="background:#fee2e2;color:#991b1b;">Declined</span>';
+      else if(mb) right='<span class="pstat">bid \u20B9'+mb.rate+' \u00B7 pending</span>';
+      else right='<span class="pstat">Applied</span>';
+      return '<div class="post-item"><span class="emo">'+p.emo+'</span><div style="flex:1;"><div class="pt">'+esc(p.title)+'</div><div class="pm">\uD83D\uDC64 '+esc(p.by)+(p.city?' \u00B7 \uD83D\uDCCD '+esc(p.city):'')+(p.budget?' \u00B7 budget \u20B9'+esc(p.budget):'')+'</div></div>'+right+'</div>';
+    }).join("")+'</div>' : '<div class="empty">You haven\u2019t applied to any work yet. <a onclick="go(\'work\')" style="color:var(--pine);font-weight:700;cursor:pointer;">Find work \u2192</a></div>';
+    var workerCta = S.worker
+      ? '<button class="btn btn-ghost btn-sm" onclick="editWorkerProfile()">\u270F\uFE0F Edit my worker profile</button>'
+      : '<div class="empty">You\u2019re not registered as a worker yet.<br><br><button class="btn btn-go btn-sm" onclick="go(\'work\')">\uD83D\uDCAA Register to find work</button></div>';
+    var freeNote = isFreeWindow() ? '<div class="meta" style="margin:8px 0 0;color:var(--pine-deep);font-weight:600;">\uD83C\uDF81 Free applying is active on your account (first 6 months).</div>' : '';
+    var findWorkHtml = '<div class="sub-h">\uD83D\uDD0E Find work</div>'+workerCta+freeNote+
+      '<div class="sub-h" style="font-size:14px;margin-top:14px;">Jobs I\u2019ve applied to</div>'+appliedHtml;
+
+    box.innerHTML=
+      '<div class="prof-card"><div class="bigav">'+initial+'</div><div style="flex:1;"><div class="nm">'+esc(S.user.name)+'</div><div class="meta">📱 '+esc(S.user.mobile)+(S.location.city?' · 📍 '+esc(S.location.city)+', '+esc(S.location.state):'')+'</div>'+typeBadge+'<div class="verified" style="margin-top:6px;">✓ Verified mobile</div></div>'+
+      '<button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="logout()">🚪 Log out</button></div>'+
+      workerHtml+
+      findWorkHtml+
+      '<div class="sub-h">📋 My requests</div><div class="post-list">'+postsHtml+'</div>';
+  }
+
+  /* ===== drawer ===== */
+  window.openDrawer = function(){ el("drawer").classList.add("open"); };
+  window.closeDrawer = function(){ el("drawer").classList.remove("open"); };
+
+  /* ===== init ===== */
+  load();
+  seedPosts();
+  fillStateSelect("stateSel"); fillStateSelect("stateSelM");
+  ["hireState","wkState","gvState","pfState"].forEach(function(s){ fillStateSelect(s); });
+  if(S.location.state){ el("stateSel").value=S.location.state; el("stateSelM").value=S.location.state; fillCities("stateSel","citySel"); fillCities("stateSelM","citySelM"); if(S.location.city){ el("citySel").value=S.location.city; el("citySelM").value=S.location.city; } }
+  // prefill form locations on first open via onchange of section nav handled when forms shown; also prefill now:
+  prefillFormLocation("hireState","hireCity"); prefillFormLocation("wkState","wkCity"); prefillFormLocation("gvState","gvCity");
+  renderServices();
+  gvAddItem();
+  renderHomeJobs();
+  renderWorkBoard();
+  renderAuth();
+  showTermsIfNeeded();
+
+})();
+</script>
+
+<!-- MOBILE BOTTOM NAVIGATION -->
+<nav class="mobile-bottom-nav" id="mobileNav">
+  <a onclick="go('home')" id="mnav-home" class="active"><span class="nav-icon">&#127968;</span><span class="nav-label">Home</span></a>
+  <a onclick="go('hire')" id="mnav-hire"><span class="nav-icon">&#128227;</span><span class="nav-label">Hire</span></a>
+  <a onclick="go('work')" id="mnav-work"><span class="nav-icon">&#128188;</span><span class="nav-label">Find Work</span></a>
+  <a onclick="go('services')" id="mnav-services"><span class="nav-icon">&#128736;</span><span class="nav-label">Services</span></a>
+  <a onclick="go('profile')" id="mnav-profile"><span class="nav-icon">&#128100;</span><span class="nav-label">Profile</span></a>
+</nav>
+
+<!-- INSTALL APP BANNER -->
+<div class="install-banner" id="installBanner">
+  <span>&#128241; Add YourWorkDo to your home screen for app-like experience</span>
+  <button class="btn btn-go btn-sm" onclick="installApp()">Install</button>
+  <button class="ib-close" onclick="dismissInstall()">&#10005;</button>
+</div>
+
+<script>
+// Mobile bottom nav active state
+(function(){
+  var origGo = window.go;
+  window.go = function(name){
+    origGo(name);
+    document.querySelectorAll('.mobile-bottom-nav a').forEach(function(a){a.classList.remove('active');});
+    var m=document.getElementById('mnav-'+name); if(m) m.classList.add('active');
+  };
+  // PWA install prompt
+  var deferredPrompt=null;
+  window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();deferredPrompt=e;
+    var b=document.getElementById('installBanner'); if(b&&!localStorage.getItem('ywd_dismissed_install')) b.classList.add('show');
+  });
+  window.installApp=function(){if(deferredPrompt){deferredPrompt.prompt();deferredPrompt.userChoice.then(function(){deferredPrompt=null;document.getElementById('installBanner').classList.remove('show');});}else{alert('To install: tap your browser menu (3 dots) and select "Add to Home Screen"');}};
+  window.dismissInstall=function(){document.getElementById('installBanner').classList.remove('show');localStorage.setItem('ywd_dismissed_install','1');};
+})();
+</script>
+</body>
+</html>
