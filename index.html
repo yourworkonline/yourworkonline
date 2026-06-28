@@ -1596,33 +1596,58 @@ var db = firebase.database();
     var m=el("authMobile").value.replace(/\D/g,"");
     if(m.length!==10){ toast("Enter a valid 10-digit number","📱"); return; }
     S.auth.mobile=m;
-    // Setup invisible reCAPTCHA
-    if(!window.recaptchaVerifier){
-      window.recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container',{'size':'invisible'});
+    // Clear old reCAPTCHA if exists
+    if(window.recaptchaVerifier){
+      try{ window.recaptchaVerifier.clear(); }catch(e){}
+      window.recaptchaVerifier=null;
     }
-    var phoneNumber = "+91" + m;
-    toast("Sending OTP...","📩");
-    firebase.auth().signInWithPhoneNumber(phoneNumber, window.recaptchaVerifier)
-      .then(function(confirmationResult){
-        window.confirmationResult = confirmationResult;
-        el("otpSentMsg").textContent="OTP sent to 📱 "+m;
-        document.querySelectorAll("#otpRow .otp-box").forEach(function(b){b.value="";});
-        el("authStep1").style.display="none"; el("authStep2").style.display="block";
-        setTimeout(function(){ var f=document.querySelector("#otpRow .otp-box"); if(f)f.focus(); },120);
-        toast("OTP sent successfully!","✅");
-      })
-      .catch(function(error){
-        console.error("OTP error:", error);
-        // Reset reCAPTCHA on failure so user can retry
-        if(window.recaptchaVerifier){ window.recaptchaVerifier.clear(); window.recaptchaVerifier=null; }
-        if(error.code==="auth/too-many-requests"){
-          toast("Too many attempts. Try again later.","⏳");
-        } else if(error.code==="auth/invalid-phone-number"){
-          toast("Invalid phone number","❌");
-        } else {
-          toast("Failed to send OTP. Check network.","❌");
+    // Clear the container
+    var rc=el("recaptcha-container"); if(rc) rc.innerHTML="";
+    // Setup normal (visible) reCAPTCHA for reliability
+    try{
+      window.recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container',{
+        'size':'normal',
+        'callback': function(response){
+          // reCAPTCHA solved — now send OTP
+          var phoneNumber = "+91" + S.auth.mobile;
+          toast("Sending OTP...","📩");
+          firebase.auth().signInWithPhoneNumber(phoneNumber, window.recaptchaVerifier)
+            .then(function(confirmationResult){
+              window.confirmationResult = confirmationResult;
+              el("otpSentMsg").textContent="OTP sent to 📱 "+S.auth.mobile;
+              document.querySelectorAll("#otpRow .otp-box").forEach(function(b){b.value="";});
+              el("authStep1").style.display="none"; el("authStep2").style.display="block";
+              setTimeout(function(){ var f=document.querySelector("#otpRow .otp-box"); if(f)f.focus(); },120);
+              toast("OTP sent successfully!","✅");
+            })
+            .catch(function(error){
+              console.error("OTP send error:", error);
+              if(window.recaptchaVerifier){ try{window.recaptchaVerifier.clear();}catch(e){} window.recaptchaVerifier=null; }
+              var rc2=el("recaptcha-container"); if(rc2) rc2.innerHTML="";
+              if(error.code==="auth/too-many-requests") toast("Too many attempts. Try later.","⏳");
+              else if(error.code==="auth/invalid-phone-number") toast("Invalid phone number","❌");
+              else if(error.code==="auth/operation-not-allowed") toast("Enable Phone Auth in Firebase Console","❌");
+              else if(error.code==="auth/unauthorized-domain") toast("Add this domain in Firebase Console → Auth → Authorized domains","❌");
+              else toast("Error: "+(error.message||error.code),"❌");
+            });
+        },
+        'expired-callback': function(){
+          toast("reCAPTCHA expired. Click again.","⏳");
+          if(window.recaptchaVerifier){try{window.recaptchaVerifier.clear();}catch(e){} window.recaptchaVerifier=null;}
+          var rc2=el("recaptcha-container"); if(rc2) rc2.innerHTML="";
         }
       });
+      window.recaptchaVerifier.render().then(function(widgetId){
+        window.recaptchaWidgetId = widgetId;
+        toast("Complete the reCAPTCHA below, then OTP will be sent","🤖");
+      }).catch(function(e){
+        console.error("reCAPTCHA render error:", e);
+        toast("reCAPTCHA error: "+(e.message||e.code)+". Make sure domain is authorized in Firebase.","❌");
+      });
+    }catch(e){
+      console.error("reCAPTCHA init error:",e);
+      toast("reCAPTCHA failed: "+e.message,"❌");
+    }
   };
   window.otpNext = function(node){ node.value=node.value.replace(/\D/g,""); if(node.value && node.nextElementSibling) node.nextElementSibling.focus(); };
   window.verifyAuthOTP = function(){
