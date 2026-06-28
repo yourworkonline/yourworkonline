@@ -16,6 +16,22 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;500;600;700;800&family=Hanken+Grotesque:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script>
+// Firebase init
+var firebaseConfig = {
+  apiKey: "AIzaSyDWdI1PMiD950hQwneLfrNDqmHmXD-pdv8",
+  authDomain: "your-work-do-do.firebaseapp.com",
+  projectId: "your-work-do-do",
+  storageBucket: "your-work-do-do.firebasestorage.app",
+  messagingSenderId: "549886228736",
+  appId: "1:549886228736:web:e51801b0eb225c84739be5",
+  databaseURL: "https://your-work-do-do-default-rtdb.firebaseio.com"
+};
+firebase.initializeApp(firebaseConfig);
+var db = firebase.database();
+</script>
 <script>
 /* ===== YourWorkDo quotation generator (shared with Node example build) ===== */
 (function (root, factory) {
@@ -1325,31 +1341,65 @@
   /* ===== state + storage ===== */
   var S = { user:null, location:{state:"",city:""}, posts:[], worker:null, unlocked:[], notifs:[], chats:{}, auth:{mode:"login",mobile:"",code:"",pending:null}, pay:{amount:0,app:null,after:null}, wkSkills:[] };
 
-  function userKey(k){ return S.user ? "ywd2_"+S.user.mobile+"_"+k : "ywd2_guest_"+k; }
+  function userKey(k){ return S.user ? S.user.mobile+"_"+k : "guest_"+k; }
 
   function save(){ try{
+    // Save user locally (for session persistence)
     localStorage.setItem("ywd2_user",JSON.stringify(S.user));
     localStorage.setItem("ywd2_loc",JSON.stringify(S.location));
-    // Shared (all users see same posts and chats)
-    localStorage.setItem("ywd2_posts",JSON.stringify(S.posts));
-    localStorage.setItem("ywd2_chats",JSON.stringify(S.chats||{}));
-    // Per-user
-    localStorage.setItem(userKey("worker"),JSON.stringify(S.worker));
-    localStorage.setItem(userKey("unlocked"),JSON.stringify(S.unlocked));
-    localStorage.setItem(userKey("notifs"),JSON.stringify(S.notifs||[]));
-  }catch(e){} }
-  function load(){ try{
-    var u=localStorage.getItem("ywd2_user"); if(u)S.user=JSON.parse(u);
+    // Save shared data to Firebase
+    db.ref("posts").set(S.posts||[]);
+    db.ref("chats").set(S.chats||{});
+    // Save per-user data to Firebase
+    if(S.user && S.user.mobile){
+      db.ref("users/"+S.user.mobile+"/worker").set(S.worker||null);
+      db.ref("users/"+S.user.mobile+"/unlocked").set(S.unlocked||[]);
+      db.ref("users/"+S.user.mobile+"/notifs").set(S.notifs||[]);
+    }
+  }catch(e){ if(window.console) console.error("save error:",e); } }
+
+  var _firebaseLoaded = false;
+  function load(callback){ try{
+    // Load user from localStorage (instant)
+    var u=localStorage.getItem("ywd2_user"); if(u && u!=="null")S.user=JSON.parse(u);
     var l=localStorage.getItem("ywd2_loc"); if(l)S.location=JSON.parse(l);
-    // Shared
-    var p=localStorage.getItem("ywd2_posts"); if(p)S.posts=JSON.parse(p);
-    var ch=localStorage.getItem("ywd2_chats"); if(ch)S.chats=JSON.parse(ch);
-    // Per-user (needs S.user to be loaded first)
-    var w=localStorage.getItem(userKey("worker")); S.worker=w?JSON.parse(w):null;
-    var un=localStorage.getItem(userKey("unlocked")); S.unlocked=un?JSON.parse(un):[];
-    var nf=localStorage.getItem(userKey("notifs")); S.notifs=nf?JSON.parse(nf):[];
-    if(S.user && !S.user.joined){ S.user.joined=Date.now(); }
-  }catch(e){} }
+    // Load shared data from Firebase
+    db.ref("posts").once("value",function(snap){
+      var val=snap.val();
+      if(val && Array.isArray(val)) S.posts=val;
+      else if(val) S.posts=Object.values(val);
+      else S.posts=[];
+      db.ref("chats").once("value",function(csnap){
+        S.chats=csnap.val()||{};
+        // Load per-user data
+        if(S.user && S.user.mobile){
+          db.ref("users/"+S.user.mobile).once("value",function(usnap){
+            var ud=usnap.val()||{};
+            S.worker=ud.worker||null;
+            S.unlocked=ud.unlocked||[];
+            S.notifs=ud.notifs||[];
+            _firebaseLoaded=true;
+            if(typeof callback==="function") callback();
+          });
+        } else {
+          S.worker=null; S.unlocked=[]; S.notifs=[];
+          _firebaseLoaded=true;
+          if(typeof callback==="function") callback();
+        }
+      });
+    });
+  }catch(e){ if(window.console) console.error("load error:",e); if(typeof callback==="function") callback(); } }
+
+  // Listen for real-time updates on posts
+  db.ref("posts").on("value",function(snap){
+    if(!_firebaseLoaded) return;
+    var val=snap.val();
+    if(val && Array.isArray(val)) S.posts=val;
+    else if(val) S.posts=Object.values(val);
+    else S.posts=[];
+    if(typeof renderWorkBoard==="function") renderWorkBoard();
+    if(typeof renderHomeJobs==="function") renderHomeJobs();
+  });
 
   var SIX_MONTHS = 1000*60*60*24*182;
   function isFreeWindow(){ return !!(S.user && S.user.joined && (Date.now()-S.user.joined < SIX_MONTHS)); }
@@ -1533,16 +1583,19 @@
       var prev = (S.user && S.user.mobile===S.auth.mobile) ? S.user : {};
       S.user={ mobile:S.auth.mobile, name:name||"Member", type:prev.type||"Individual", org:prev.org||"", address:prev.address||"", joined:prev.joined||Date.now() };
     }
-    // Reload this user's per-user data (worker, unlocked, notifs)
-    var w=localStorage.getItem(userKey("worker")); S.worker=w?JSON.parse(w):null;
-    var un=localStorage.getItem(userKey("unlocked")); S.unlocked=un?JSON.parse(un):[];
-    var nf=localStorage.getItem(userKey("notifs")); S.notifs=nf?JSON.parse(nf):[];
-    save(); renderAuth();
-    el("authModal").classList.remove("show");
-    toast("Welcome, "+S.user.name.split(" ")[0]+"!","🙏");
-    renderWorkBoard();
-    showTermsIfNeeded();
-    var act=S.auth.pending; S.auth.pending=null; if(typeof act==="function") act();
+    // Reload this user's per-user data from Firebase
+    db.ref("users/"+S.user.mobile).once("value",function(snap){
+      var ud=snap.val()||{};
+      S.worker=ud.worker||null;
+      S.unlocked=ud.unlocked||[];
+      S.notifs=ud.notifs||[];
+      save(); renderAuth();
+      el("authModal").classList.remove("show");
+      toast("Welcome, "+S.user.name.split(" ")[0]+"!","🙏");
+      renderWorkBoard(); renderHomeJobs();
+      showTermsIfNeeded();
+      var act=S.auth.pending; S.auth.pending=null; if(typeof act==="function") act();
+    });
   };
   window.logout = function(){
     S.user=null; S.worker=null; S.unlocked=[]; S.notifs=[];
@@ -2401,7 +2454,12 @@
       else if(mb && mb.status==="declined") right='<span class="pstat" style="background:#fee2e2;color:#991b1b;">Declined</span>';
       else if(mb) right='<span class="pstat">bid \u20B9'+mb.rate+' \u00B7 pending</span>';
       else right='<span class="pstat">Applied</span>';
-      return '<div class="post-item"><span class="emo">'+p.emo+'</span><div style="flex:1;"><div class="pt">'+esc(p.title)+'</div><div class="pm">\uD83D\uDC64 '+esc(p.by)+(p.city?' \u00B7 \uD83D\uDCCD '+esc(p.city):'')+(p.budget?' \u00B7 budget \u20B9'+esc(p.budget):'')+'</div></div>'+right+'</div>';
+      // Contact number: show if paid, or show pay button
+      var contactPaid = S.unlocked && S.unlocked.indexOf(p.id)>-1;
+      var contactLine = contactPaid
+        ? '<div style="margin-top:4px;font-size:12.5px;font-weight:700;color:var(--pine-deep);">\uD83D\uDCF1 '+(p.byMobile?esc(p.byMobile):'N/A')+'</div>'
+        : '<div style="margin-top:4px;"><button class="btn btn-ghost btn-xs" style="font-size:11px;" onclick="unlockContact(\''+p.id+'\')">\uD83D\uDCF1 View Contact \u2014 \u20B999</button></div>';
+      return '<div class="post-item" style="flex-wrap:wrap;"><span class="emo">'+p.emo+'</span><div style="flex:1;"><div class="pt">'+esc(p.title)+'</div><div class="pm">\uD83D\uDC64 '+esc(p.by)+(p.city?' \u00B7 \uD83D\uDCCD '+esc(p.city):'')+(p.budget?' \u00B7 budget \u20B9'+esc(p.budget):'')+'</div>'+contactLine+'</div>'+right+'</div>';
     }).join("")+'</div>' : '<div class="empty">You haven\u2019t applied to any work yet. <a onclick="go(\'work\')" style="color:var(--pine);font-weight:700;cursor:pointer;">Find work \u2192</a></div>';
     var workerCta = S.worker
       ? '<button class="btn btn-ghost btn-sm" onclick="editWorkerProfile()">\u270F\uFE0F Edit my worker profile</button>'
@@ -2423,19 +2481,23 @@
   window.closeDrawer = function(){ el("drawer").classList.remove("open"); };
 
   /* ===== init ===== */
-  load();
-  seedPosts();
+  // Fill dropdowns immediately (don't need data)
   fillStateSelect("stateSel"); fillStateSelect("stateSelM");
   ["hireState","wkState","gvState","pfState"].forEach(function(s){ fillStateSelect(s); });
-  if(S.location.state){ el("stateSel").value=S.location.state; el("stateSelM").value=S.location.state; fillCities("stateSel","citySel"); fillCities("stateSelM","citySelM"); if(S.location.city){ el("citySel").value=S.location.city; el("citySelM").value=S.location.city; } }
-  // prefill form locations on first open via onchange of section nav handled when forms shown; also prefill now:
-  prefillFormLocation("hireState","hireCity"); prefillFormLocation("wkState","wkCity"); prefillFormLocation("gvState","gvCity");
   renderServices();
   gvAddItem();
-  renderHomeJobs();
-  renderWorkBoard();
   renderAuth();
-  showTermsIfNeeded();
+
+  // Load data from Firebase (async), then render
+  load(function(){
+    seedPosts();
+    if(S.location.state){ el("stateSel").value=S.location.state; el("stateSelM").value=S.location.state; fillCities("stateSel","citySel"); fillCities("stateSelM","citySelM"); if(S.location.city){ el("citySel").value=S.location.city; el("citySelM").value=S.location.city; } }
+    prefillFormLocation("hireState","hireCity"); prefillFormLocation("wkState","wkCity"); prefillFormLocation("gvState","gvCity");
+    renderHomeJobs();
+    renderWorkBoard();
+    renderAuth();
+    showTermsIfNeeded();
+  });
 
 })();
 </script>
