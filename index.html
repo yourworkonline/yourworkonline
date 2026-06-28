@@ -18,6 +18,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script>
 // Firebase init
 var firebaseConfig = {
@@ -468,8 +469,6 @@ var db = firebase.database();
   .otp-row{display:flex;gap:9px;justify-content:center;margin:6px 0 16px;}
   .otp-box{width:46px;height:54px;text-align:center;font-family:"Bricolage Grotesque";font-size:24px;font-weight:800;border:1.5px solid var(--line);border-radius:12px;background:#fff;color:var(--ink);}
   .otp-box:focus{outline:none;border-color:var(--pine);}
-  .demo-otp{background:#FFF4D6;border:1.5px dashed var(--marigold-deep);border-radius:11px;padding:11px 14px;font-size:14px;text-align:center;margin-bottom:14px;color:#7a5a06;}
-  .demo-otp b{font-family:"Bricolage Grotesque";font-size:19px;letter-spacing:3px;color:var(--ink);}
 
   /* razorpay-style payment */
   .rzp-head{background:linear-gradient(135deg,#0b3a82,#235FB8);color:#fff;margin:-26px -26px 0;padding:22px 26px;border-radius:20px 20px 0 0;}
@@ -931,6 +930,36 @@ var db = firebase.database();
     <div id="profileBody" style="margin-top:26px;"></div>
   </section>
 
+  <!-- ADMIN PORTAL -->
+  <section class="section" id="sec-admin">
+    <span class="eyebrow">🛡️ Admin Portal</span>
+    <h2 class="sec-h">Manage Platform</h2>
+    <p style="color:var(--muted);margin-top:8px;margin-bottom:24px;">View, edit, delete all posts and remove users. Changes sync with Firebase in real-time.</p>
+
+    <div class="tabs" style="max-width:400px;margin-bottom:24px;">
+      <button class="tab on" id="adminTabPosts" onclick="adminTab('posts')">📋 All Posts</button>
+      <button class="tab" id="adminTabUsers" onclick="adminTab('users')">👥 All Users</button>
+    </div>
+
+    <!-- Admin Posts Panel -->
+    <div id="adminPostsPanel">
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap;">
+        <input class="inp" id="adminPostSearch" placeholder="🔍 Search posts by title, city, skill..." style="max-width:320px;" oninput="renderAdminPosts()">
+        <span id="adminPostCount" style="font-family:'Space Mono';font-size:13px;color:var(--muted);"></span>
+      </div>
+      <div id="adminPostsList"></div>
+    </div>
+
+    <!-- Admin Users Panel -->
+    <div id="adminUsersPanel" style="display:none;">
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap;">
+        <input class="inp" id="adminUserSearch" placeholder="🔍 Search by name, mobile..." style="max-width:320px;" oninput="renderAdminUsers()">
+        <span id="adminUserCount" style="font-family:'Space Mono';font-size:13px;color:var(--muted);"></span>
+      </div>
+      <div id="adminUsersList"></div>
+    </div>
+  </section>
+
 </main>
 
 <!-- FOOTER -->
@@ -997,12 +1026,14 @@ var db = firebase.database();
       </div>
       <div class="fg"><label>Mobile number <span class="req">*</span></label><input class="inp" id="authMobile" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit mobile" style="text-align:center;letter-spacing:2px;font-size:18px;"></div>
       <button class="btn btn-green btn-block" onclick="sendAuthOTP()">📩 Send OTP</button>
+      <div id="recaptcha-container"></div>
     </div>
     <!-- step 2 -->
     <div id="authStep2" style="display:none;">
       <p class="msub" id="otpSentMsg"></p>
-      <div class="demo-otp">Demo mode — your OTP is <b id="demoCode">0000</b></div>
       <div class="otp-row" id="otpRow">
+        <input class="otp-box" maxlength="1" inputmode="numeric" oninput="otpNext(this)">
+        <input class="otp-box" maxlength="1" inputmode="numeric" oninput="otpNext(this)">
         <input class="otp-box" maxlength="1" inputmode="numeric" oninput="otpNext(this)">
         <input class="otp-box" maxlength="1" inputmode="numeric" oninput="otpNext(this)">
         <input class="otp-box" maxlength="1" inputmode="numeric" oninput="otpNext(this)">
@@ -1472,6 +1503,7 @@ var db = firebase.database();
     if(name==="profile") renderProfile();
     if(name==="govt") prefillGovtFromProfile();
     if(name==="work") renderWorkBoard();
+    if(name==="admin") renderAdmin();
     window.scrollTo(0,0);
     closeDrawer();
   };
@@ -1518,6 +1550,7 @@ var db = firebase.database();
           '<div class="pm-head"><div class="nm">'+esc(S.user.name)+'</div><div class="meta">📱 '+esc(S.user.mobile)+'</div></div>'+
           '<button class="pm-item" onclick="go(\'profile\');closeProfileMenu()">👤 My profile</button>'+
           '<button class="pm-item" onclick="go(\'hire\');closeProfileMenu()">📤 Post a job</button>'+
+          (isAdmin()?'<button class="pm-item" onclick="go(\'admin\');closeProfileMenu()">🛡️ Admin Panel</button>':'')+
           '<button class="pm-item" onclick="openContactUs();closeProfileMenu()">📧 Contact us</button>'+
           '<button class="pm-item" onclick="openTerms();closeProfileMenu()">📋 Terms &amp; Conditions</button>'+
           '<button class="pm-item danger" onclick="logout()">🚪 Log out</button>'+
@@ -1562,44 +1595,82 @@ var db = firebase.database();
     }
     var m=el("authMobile").value.replace(/\D/g,"");
     if(m.length!==10){ toast("Enter a valid 10-digit number","📱"); return; }
-    S.auth.mobile=m; S.auth.code=String(Math.floor(1000+Math.random()*9000));
-    el("demoCode").textContent=S.auth.code;
-    el("otpSentMsg").textContent="OTP sent to 📱 "+m;
-    document.querySelectorAll("#otpRow .otp-box").forEach(function(b){b.value="";});
-    el("authStep1").style.display="none"; el("authStep2").style.display="block";
-    setTimeout(function(){ var f=$("#otpRow .otp-box"); if(f)f.focus(); },120);
+    S.auth.mobile=m;
+    // Setup invisible reCAPTCHA
+    if(!window.recaptchaVerifier){
+      window.recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container',{'size':'invisible'});
+    }
+    var phoneNumber = "+91" + m;
+    toast("Sending OTP...","📩");
+    firebase.auth().signInWithPhoneNumber(phoneNumber, window.recaptchaVerifier)
+      .then(function(confirmationResult){
+        window.confirmationResult = confirmationResult;
+        el("otpSentMsg").textContent="OTP sent to 📱 "+m;
+        document.querySelectorAll("#otpRow .otp-box").forEach(function(b){b.value="";});
+        el("authStep1").style.display="none"; el("authStep2").style.display="block";
+        setTimeout(function(){ var f=document.querySelector("#otpRow .otp-box"); if(f)f.focus(); },120);
+        toast("OTP sent successfully!","✅");
+      })
+      .catch(function(error){
+        console.error("OTP error:", error);
+        // Reset reCAPTCHA on failure so user can retry
+        if(window.recaptchaVerifier){ window.recaptchaVerifier.clear(); window.recaptchaVerifier=null; }
+        if(error.code==="auth/too-many-requests"){
+          toast("Too many attempts. Try again later.","⏳");
+        } else if(error.code==="auth/invalid-phone-number"){
+          toast("Invalid phone number","❌");
+        } else {
+          toast("Failed to send OTP. Check network.","❌");
+        }
+      });
   };
   window.otpNext = function(node){ node.value=node.value.replace(/\D/g,""); if(node.value && node.nextElementSibling) node.nextElementSibling.focus(); };
   window.verifyAuthOTP = function(){
     var code=Array.prototype.map.call(document.querySelectorAll("#otpRow .otp-box"),function(b){return b.value;}).join("");
-    if(code!==S.auth.code){ toast("Wrong OTP, try again","❌"); return; }
-    var name = S.auth.mode==="register" ? (el("regFirst").value.trim()+" "+el("regLast").value.trim()).trim() : (S.user&&S.user.mobile===S.auth.mobile?S.user.name:"Member");
-    if(S.auth.mode==="register"){
-      var atype = el("regAcctType") ? el("regAcctType").value : "Individual";
-      var aorg  = (atype!=="Individual" && el("regOrg"))  ? el("regOrg").value.trim()  : "";
-      var aaddr = (atype!=="Individual" && el("regAddr")) ? el("regAddr").value.trim() : "";
-      S.user={ mobile:S.auth.mobile, name:name||"Member", type:atype, org:aorg, address:aaddr, joined:Date.now() };
-    } else {
-      var prev = (S.user && S.user.mobile===S.auth.mobile) ? S.user : {};
-      S.user={ mobile:S.auth.mobile, name:name||"Member", type:prev.type||"Individual", org:prev.org||"", address:prev.address||"", joined:prev.joined||Date.now() };
-    }
-    // Reload this user's per-user data from Firebase
-    db.ref("users/"+S.user.mobile).once("value",function(snap){
-      var ud=snap.val()||{};
-      S.worker=ud.worker||null;
-      S.unlocked=ud.unlocked||[];
-      S.notifs=ud.notifs||[];
-      save(); renderAuth();
-      el("authModal").classList.remove("show");
-      toast("Welcome, "+S.user.name.split(" ")[0]+"!","🙏");
-      renderWorkBoard(); renderHomeJobs();
-      showTermsIfNeeded();
-      var act=S.auth.pending; S.auth.pending=null; if(typeof act==="function") act();
-    });
+    if(code.length!==6){ toast("Enter the 6-digit OTP","❌"); return; }
+    toast("Verifying...","⏳");
+    window.confirmationResult.confirm(code)
+      .then(function(result){
+        // OTP verified successfully
+        var name = S.auth.mode==="register" ? (el("regFirst").value.trim()+" "+el("regLast").value.trim()).trim() : (S.user&&S.user.mobile===S.auth.mobile?S.user.name:"Member");
+        if(S.auth.mode==="register"){
+          var atype = el("regAcctType") ? el("regAcctType").value : "Individual";
+          var aorg  = (atype!=="Individual" && el("regOrg"))  ? el("regOrg").value.trim()  : "";
+          var aaddr = (atype!=="Individual" && el("regAddr")) ? el("regAddr").value.trim() : "";
+          S.user={ mobile:S.auth.mobile, name:name||"Member", type:atype, org:aorg, address:aaddr, joined:Date.now() };
+        } else {
+          var prev = (S.user && S.user.mobile===S.auth.mobile) ? S.user : {};
+          S.user={ mobile:S.auth.mobile, name:name||"Member", type:prev.type||"Individual", org:prev.org||"", address:prev.address||"", joined:prev.joined||Date.now() };
+        }
+        // Reload this user's per-user data from Firebase
+        db.ref("users/"+S.user.mobile).once("value",function(snap){
+          var ud=snap.val()||{};
+          S.worker=ud.worker||null;
+          S.unlocked=ud.unlocked||[];
+          S.notifs=ud.notifs||[];
+          save(); renderAuth();
+          el("authModal").classList.remove("show");
+          toast("Welcome, "+S.user.name.split(" ")[0]+"!","🙏");
+          renderWorkBoard(); renderHomeJobs();
+          showTermsIfNeeded();
+          var act=S.auth.pending; S.auth.pending=null; if(typeof act==="function") act();
+        });
+      })
+      .catch(function(error){
+        console.error("Verify error:", error);
+        if(error.code==="auth/invalid-verification-code"){
+          toast("Wrong OTP, try again","❌");
+        } else if(error.code==="auth/code-expired"){
+          toast("OTP expired. Send again.","⏳");
+        } else {
+          toast("Verification failed. Try again.","❌");
+        }
+      });
   };
   window.logout = function(){
     S.user=null; S.worker=null; S.unlocked=[]; S.notifs=[];
     localStorage.setItem("ywd2_user","null");
+    firebase.auth().signOut().catch(function(){});
     renderAuth(); closeProfileMenu(); go("home"); toast("Logged out","👋");
   };
 
@@ -2359,7 +2430,11 @@ var db = firebase.database();
 
   /* ===== terms ===== */
   window.openTerms = function(){ el("termsModal").classList.add("show"); };
-  window.closeModal = function(id){ el(id).classList.remove("show"); if(id==="payModal") setTimeout(restorePayBody,200); };
+  window.closeModal = function(id){
+    el(id).classList.remove("show");
+    if(id==="payModal") setTimeout(restorePayBody,200);
+    if(id==="authModal"){ if(window.recaptchaVerifier){try{window.recaptchaVerifier.clear();}catch(e){} window.recaptchaVerifier=null;} }
+  };
 
   /* ===== terms acceptance ===== */
   window.acceptTerms = function(){
@@ -2482,6 +2557,170 @@ var db = firebase.database();
 
   /* ===== init ===== */
   // Fill dropdowns immediately (don't need data)
+  /* ===== ADMIN PORTAL ===== */
+  var ADMIN_MOBILE = "9728282758";
+  function isAdmin(){ return !!(S.user && S.user.mobile === ADMIN_MOBILE); }
+
+  window.adminTab = function(tab){
+    el("adminTabPosts").classList.toggle("on", tab==="posts");
+    el("adminTabUsers").classList.toggle("on", tab==="users");
+    el("adminPostsPanel").style.display = tab==="posts" ? "block" : "none";
+    el("adminUsersPanel").style.display = tab==="users" ? "block" : "none";
+    if(tab==="posts") renderAdminPosts();
+    if(tab==="users") renderAdminUsers();
+  };
+
+  function renderAdmin(){
+    if(!isAdmin()){ go("home"); toast("Access denied","🚫"); return; }
+    renderAdminPosts();
+  }
+
+  window.renderAdminPosts = function(){
+    var box=el("adminPostsList"); if(!box) return;
+    var search = (el("adminPostSearch")?el("adminPostSearch").value:"").toLowerCase().trim();
+    var posts = S.posts.filter(function(p){
+      if(!search) return true;
+      return (p.title||"").toLowerCase().indexOf(search)>-1 ||
+             (p.city||"").toLowerCase().indexOf(search)>-1 ||
+             (p.skill||"").toLowerCase().indexOf(search)>-1 ||
+             (p.byMobile||"").indexOf(search)>-1 ||
+             (p.by||"").toLowerCase().indexOf(search)>-1;
+    });
+    el("adminPostCount").textContent = posts.length + " of " + S.posts.length + " posts";
+    if(!posts.length){ box.innerHTML='<div class="empty">No posts found.</div>'; return; }
+    box.innerHTML = posts.map(function(p,i){
+      var bidsCount = (p.bids||[]).length;
+      var statusColor = p.status==="open"?"var(--pine)":p.status==="assigned"?"var(--blue)":"var(--muted)";
+      return '<div class="post-item" style="flex-direction:column;align-items:stretch;gap:8px;">'+
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
+          '<div>'+
+            '<div class="pt">'+esc(p.title||"Untitled")+'</div>'+
+            '<div class="pm">👤 '+esc(p.by||"—")+' · 📱 '+esc(p.byMobile||"—")+' · 🏙️ '+esc(p.city||"—")+'</div>'+
+            '<div class="pm">💰 ₹'+(p.budget||"N/A")+' · 🏷️ '+esc(p.skill||"—")+' · 📊 '+bidsCount+' bids · ⏰ '+timeAgo(p.ts)+'</div>'+
+          '</div>'+
+          '<span style="font-family:Space Mono;font-size:11px;font-weight:700;background:var(--pine-soft);color:'+statusColor+';padding:5px 9px;border-radius:7px;text-transform:uppercase;white-space:nowrap;">'+esc(p.status||"open")+'</span>'+
+        '</div>'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">'+
+          '<button class="btn btn-ghost btn-sm" onclick="adminEditPost(\''+p.id+'\')">✏️ Edit</button>'+
+          '<button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="adminDeletePost(\''+p.id+'\')">🗑️ Delete</button>'+
+          (p.status==="open"?'<button class="btn btn-ghost btn-sm" onclick="adminClosePost(\''+p.id+'\')">🔒 Close</button>':'')+
+          (p.status!=="open"?'<button class="btn btn-ghost btn-sm" onclick="adminReopenPost(\''+p.id+'\')">🔓 Reopen</button>':'')+
+        '</div>'+
+      '</div>';
+    }).join("");
+  };
+
+  window.renderAdminUsers = function(){
+    var box=el("adminUsersList"); if(!box) return;
+    var search = (el("adminUserSearch")?el("adminUserSearch").value:"").toLowerCase().trim();
+    // Load all users from Firebase
+    db.ref("users").once("value",function(snap){
+      var usersData = snap.val()||{};
+      var users = Object.keys(usersData).map(function(mobile){
+        var u = usersData[mobile]||{};
+        return { mobile:mobile, worker:u.worker||null, notifs:u.notifs||[], unlocked:u.unlocked||[] };
+      });
+      if(search){
+        users = users.filter(function(u){
+          return u.mobile.indexOf(search)>-1 ||
+                 (u.worker && (u.worker.name||"").toLowerCase().indexOf(search)>-1) ||
+                 (u.worker && (u.worker.city||"").toLowerCase().indexOf(search)>-1);
+        });
+      }
+      el("adminUserCount").textContent = users.length + " users";
+      if(!users.length){ box.innerHTML='<div class="empty">No users found.</div>'; return; }
+      box.innerHTML = users.map(function(u){
+        var wk = u.worker;
+        return '<div class="post-item" style="flex-direction:column;align-items:stretch;gap:8px;">'+
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
+            '<div>'+
+              '<div class="pt">📱 '+esc(u.mobile)+'</div>'+
+              (wk?'<div class="pm">👷 Worker: '+esc(wk.name||"—")+' · 🏙️ '+esc(wk.city||"—")+' · 🔧 '+esc(wk.skills||"—")+'</div>':'<div class="pm" style="color:var(--muted);">No worker profile</div>')+
+            '</div>'+
+            (wk?'<span class="verified">✅ Worker</span>':'<span style="font-size:12px;color:var(--muted);">Member only</span>')+
+          '</div>'+
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">'+
+            (wk?'<button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="adminDeleteWorker(\''+u.mobile+'\')">🗑️ Remove Worker Profile</button>':'')+
+            '<button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="adminDeleteUser(\''+u.mobile+'\')">❌ Remove User</button>'+
+          '</div>'+
+        '</div>';
+      }).join("");
+    });
+  };
+
+  window.adminEditPost = function(postId){
+    if(!isAdmin()) return;
+    var p = findPost(postId); if(!p){ toast("Post not found","❌"); return; }
+    var newTitle = prompt("Edit title:", p.title||"");
+    if(newTitle===null) return;
+    var newBudget = prompt("Edit budget (₹):", p.budget||"");
+    if(newBudget===null) return;
+    var newCity = prompt("Edit city:", p.city||"");
+    if(newCity===null) return;
+    var newSkill = prompt("Edit skill/category:", p.skill||"");
+    if(newSkill===null) return;
+    var newDesc = prompt("Edit description:", p.desc||"");
+    if(newDesc===null) return;
+    p.title = newTitle||p.title;
+    p.budget = newBudget||p.budget;
+    p.city = newCity||p.city;
+    p.skill = newSkill||p.skill;
+    p.desc = newDesc||p.desc;
+    save();
+    renderAdminPosts();
+    toast("Post updated ✅","✏️");
+  };
+
+  window.adminDeletePost = function(postId){
+    if(!isAdmin()) return;
+    if(!confirm("Delete this post permanently? This cannot be undone.")) return;
+    S.posts = S.posts.filter(function(p){ return p.id!==postId; });
+    // Also remove chat for this post
+    if(S.chats && S.chats[postId]) delete S.chats[postId];
+    save();
+    renderAdminPosts();
+    toast("Post deleted from Firebase ✅","🗑️");
+  };
+
+  window.adminClosePost = function(postId){
+    if(!isAdmin()) return;
+    var p=findPost(postId); if(!p) return;
+    p.status="closed";
+    save(); renderAdminPosts();
+    toast("Post closed ✅","🔒");
+  };
+
+  window.adminReopenPost = function(postId){
+    if(!isAdmin()) return;
+    var p=findPost(postId); if(!p) return;
+    p.status="open";
+    save(); renderAdminPosts();
+    toast("Post reopened ✅","🔓");
+  };
+
+  window.adminDeleteWorker = function(mobile){
+    if(!isAdmin()) return;
+    if(!confirm("Remove worker profile for "+mobile+"? They will need to re-register as worker.")) return;
+    db.ref("users/"+mobile+"/worker").set(null);
+    // If current user is viewing, update local state
+    if(S.user && S.user.mobile===mobile) S.worker=null;
+    renderAdminUsers();
+    toast("Worker profile removed ✅","🗑️");
+  };
+
+  window.adminDeleteUser = function(mobile){
+    if(!isAdmin()) return;
+    if(mobile===ADMIN_MOBILE){ toast("Cannot delete admin account","🚫"); return; }
+    if(!confirm("Remove user "+mobile+" completely? This deletes their worker profile, notifications, unlocked data, and all their posts.")) return;
+    // Remove user data from Firebase
+    db.ref("users/"+mobile).remove();
+    // Remove all posts by this user
+    S.posts = S.posts.filter(function(p){ return p.byMobile!==mobile; });
+    save();
+    renderAdminUsers();
+    toast("User "+mobile+" removed completely ✅","❌");
+  };
+
   fillStateSelect("stateSel"); fillStateSelect("stateSelM");
   ["hireState","wkState","gvState","pfState"].forEach(function(s){ fillStateSelect(s); });
   renderServices();
